@@ -45,7 +45,10 @@ public class HumanController extends AbstractEntityController {
             name = teamName;
         }
 
-        if (Setting.USE_SCOREBOARD_TEAMS.asBoolean()) {
+        // PitRemake owns combat bot display teams. Citizens' fake team would
+        // repeatedly move the NPC entry out of PitRemake's visible team.
+        if (Setting.USE_SCOREBOARD_TEAMS.asBoolean()
+                && !npc.data().<Boolean> get("pitsim-combat-bot", false)) {
             npc.getOrAddTrait(ScoreboardTrait.class).createTeam(name);
         }
 

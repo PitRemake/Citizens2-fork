@@ -15,7 +15,10 @@ import net.minecraft.server.v1_8_R3.EntityTrackerEntry;
 import net.minecraft.server.v1_8_R3.PacketPlayOutAnimation;
 
 public class PlayerlistTrackerEntry extends EntityTrackerEntry {
-    private EntityPlayer lastUpdatedPlayer;
+    // WindSpigot can update different viewers of this entry concurrently. The
+    // spawn packet constructor calls the NPC's getDataWatcher(), so keep that
+    // callback bound to the viewer on the current tracking thread.
+    private final ThreadLocal<EntityPlayer> lastUpdatedPlayer = new ThreadLocal<EntityPlayer>();
 
     public PlayerlistTrackerEntry(Entity entity, int i, int j, boolean flag) {
         super(entity, i, j, flag);
@@ -26,16 +29,16 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
     }
 
     public boolean isUpdating() {
-        return lastUpdatedPlayer != null;
+        return lastUpdatedPlayer.get() != null;
     }
 
     public void updateLastPlayer() {
-        if (lastUpdatedPlayer == null)
+        final EntityPlayer entityplayer = lastUpdatedPlayer.get();
+        if (entityplayer == null)
             return;
         final Entity tracker = getTracker(this);
-        final EntityPlayer entityplayer = lastUpdatedPlayer;
+        lastUpdatedPlayer.remove();
         NMS.sendTabListAdd(entityplayer.getBukkitEntity(), (Player) tracker.getBukkitEntity());
-        lastUpdatedPlayer = null;
         if (!Setting.DISABLE_TABLIST.asBoolean())
             return;
         Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), new Runnable() {
@@ -52,9 +55,16 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
         // prevent updates to NPC "viewers"
         if (entityplayer instanceof EntityHumanNPC)
             return;
-        lastUpdatedPlayer = entityplayer;
-        super.updatePlayer(entityplayer);
-        lastUpdatedPlayer = null;
+        final EntityPlayer previous = lastUpdatedPlayer.get();
+        lastUpdatedPlayer.set(entityplayer);
+        try {
+            super.updatePlayer(entityplayer);
+        } finally {
+            if (previous == null)
+                lastUpdatedPlayer.remove();
+            else
+                lastUpdatedPlayer.set(previous);
+        }
     }
 
     private static int getB(EntityTrackerEntry entry) {
