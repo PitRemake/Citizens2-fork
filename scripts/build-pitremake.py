@@ -18,10 +18,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCES = {
     "net/citizensnpcs/nms/v1_8_R3/util/PlayerlistTrackerEntry.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/util/PlayerlistTrackerEntry.java",
     "net/citizensnpcs/nms/v1_8_R3/entity/HumanController.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/entity/HumanController.java",
+    "net/citizensnpcs/npc/skin/SkinPacketTracker.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/skin/SkinPacketTracker.java",
 }
 BASE_SHA256 = "54e5ef9db95a6a6f68a2bbbb1a3eeb2770087afd8ad880218855292a4618fda7"
 UPSTREAM_VERSION = "2.0.30-SNAPSHOT (build 2803)"
-FORK_VERSION = "2.0.30-PitRemake.1"
+FORK_VERSION = "2.0.30-PitRemake.3"
 
 
 def digest(path):
@@ -46,7 +47,8 @@ def build(base, server, javac, output):
             raise ValueError("Compiler did not produce every patched outer class")
         output.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(base) as original, zipfile.ZipFile(output, "w") as target:
-            if not set(replacements).issubset(original.namelist()):
+            original_names = set(original.namelist())
+            if not set(SOURCES).issubset(original_names):
                 raise ValueError("Pinned Citizens build is missing a patched class")
             for item in original.infolist():
                 data = replacements.get(item.filename, original.read(item.filename))
@@ -58,6 +60,11 @@ def build(base, server, javac, output):
                         raise ValueError("Pinned Citizens plugin version changed")
                     data = text.encode("utf-8")
                 target.writestr(item, data)
+            # A patch may add an anonymous helper class that was absent from
+            # build 2803; ship it alongside its patched outer class.
+            for name, data in replacements.items():
+                if name not in original_names:
+                    target.writestr(name, data)
     with zipfile.ZipFile(output) as result:
         for entry, replacement in replacements.items():
             assert result.read(entry) == replacement

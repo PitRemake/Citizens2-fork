@@ -39,6 +39,17 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
         final Entity tracker = getTracker(this);
         lastUpdatedPlayer.remove();
         NMS.sendTabListAdd(entityplayer.getBukkitEntity(), (Player) tracker.getBukkitEntity());
+        if (isPitTabHidden(tracker)) {
+            // The 1.8 client resolves the skin through NetworkPlayerInfo on
+            // its first render. Removing the profile in this same network
+            // pass leaves the NPC permanently on the default skin.
+            Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), new Runnable() {
+                @Override public void run() {
+                    NMS.sendTabListRemove(entityplayer.getBukkitEntity(), (Player) tracker.getBukkitEntity());
+                }
+            }, Math.max(2, Setting.TABLIST_REMOVE_PACKET_DELAY.asInt()));
+            return;
+        }
         if (!Setting.DISABLE_TABLIST.asBoolean())
             return;
         Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), new Runnable() {
@@ -65,6 +76,14 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
             else
                 lastUpdatedPlayer.set(previous);
         }
+    }
+
+    private static boolean isPitTabHidden(Entity tracker) {
+        if (!(tracker instanceof EntityHumanNPC))
+            return false;
+        net.citizensnpcs.api.npc.NPC npc = ((EntityHumanNPC) tracker).getNPC();
+        return npc.data().get("pitsim-combat-bot", false)
+                || "keeper".equals(npc.data().get("pitsim-lobby-role", ""));
     }
 
     private static int getB(EntityTrackerEntry entry) {

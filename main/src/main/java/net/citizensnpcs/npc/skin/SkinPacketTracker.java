@@ -126,6 +126,10 @@ public class SkinPacketTracker {
      */
     public void onSpawnNPC() {
         isRemoved = false;
+        // Pit-managed player NPCs already have their skin when the tracker
+        // sends the initial spawn. The delayed refresh flashes them in tab.
+        if (isPitTabHidden())
+            return;
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -156,6 +160,11 @@ public class SkinPacketTracker {
         return entity.getNPC().data().get("removefromtablist", Setting.DISABLE_TABLIST.asBoolean());
     }
 
+    private boolean isPitTabHidden() {
+        return entity.getNPC().data().get("pitsim-combat-bot", false)
+                || "keeper".equals(entity.getNPC().data().get("pitsim-lobby-role", ""));
+    }
+
     /**
      * Send skin related packets to all nearby players within the specified block radius.
      *
@@ -181,7 +190,9 @@ public class SkinPacketTracker {
     public void updateViewer(final Player player) {
         Preconditions.checkNotNull(player);
 
-        if (isRemoved || player.hasMetadata("NPC"))
+        // Tracker spawns provide the profile for these NPCs. Repeated skin
+        // updates only re-add an already visible NPC to the player list.
+        if (isRemoved || player.hasMetadata("NPC") || isPitTabHidden())
             return;
 
         PlayerEntry entry = inProgress.get(player.getUniqueId());
