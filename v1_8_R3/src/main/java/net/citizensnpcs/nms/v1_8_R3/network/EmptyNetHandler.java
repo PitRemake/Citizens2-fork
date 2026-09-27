@@ -14,4 +14,14 @@ public class EmptyNetHandler extends PlayerConnection {
     @Override
     public void sendPacket(Packet packet) {
     }
+
+    /**
+     * WindSpigot queues tracker packets before calling sendPacket, but flushes
+     * that queue only for real players. An NPC has no client, so retaining its
+     * velocity, attribute and metadata packets would grow without bound.
+     *
+     * No @Override: the vanilla CraftBukkit compile target has no queuePacket.
+     */
+    public void queuePacket(Packet packet) {
+    }
 }
