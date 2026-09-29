@@ -21,9 +21,12 @@ def run(artifact, old_artifact, server, javac, java):
         classes = pathlib.Path(temporary)
         classpath = str(artifact) + os.pathsep + str(server)
         subprocess.run([str(javac), "-source", "8", "-target", "8", "-cp", classpath,
-                        "-d", str(classes), str(ROOT / "tests/NpcPacketQueueCompatibility.java")], check=True)
+                        "-d", str(classes), str(ROOT / "tests/NpcPacketQueueCompatibility.java"),
+                        str(ROOT / "tests/NpcBotOptimizationCompatibility.java")], check=True)
         subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
-                        "NpcPacketQueueCompatibility"], check=True)
+                        "NpcPacketQueueCompatibility"], cwd=classes, check=True)
+        subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
+                        "NpcBotOptimizationCompatibility"], cwd=classes, check=True)
 
 
 if __name__ == "__main__":

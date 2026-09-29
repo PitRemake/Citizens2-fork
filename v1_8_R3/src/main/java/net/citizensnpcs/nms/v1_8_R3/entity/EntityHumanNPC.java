@@ -70,6 +70,8 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     private final SkinPacketTracker skinTracker;
     private PlayerlistTrackerEntry trackerEntry;
     private int updateCounter = 0;
+    private int pickupCounter;
+    private final ItemStack[] pitEquipment = new ItemStack[5];
 
     public EntityHumanNPC(MinecraftServer minecraftServer, WorldServer world, GameProfile gameProfile,
             PlayerInteractManager playerInteractManager, NPC npc) {
@@ -316,7 +318,9 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             bL();
         }
 
-        if (npc.data().get(NPC.Metadata.PICKUP_ITEMS, !npc.isProtected())) {
+        if (npc.data().get(NPC.Metadata.PICKUP_ITEMS, !npc.isProtected())
+                && shouldScanItems(npc.data().<Boolean>get("pitsim-combat-bot", false),
+                        npc.data().<Integer>get("pitsim-item-scan-interval", 1), pickupCounter++, getId())) {
             AxisAlignedBB axisalignedbb = null;
             if (this.vehicle != null && !this.vehicle.dead) {
                 axisalignedbb = this.getBoundingBox().a(this.vehicle.getBoundingBox()).grow(1.0, 0.0, 1.0);
@@ -420,6 +424,17 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
                 Setting.PACKET_UPDATE_DELAY.asInt()))
             return;
         updateCounter = 0;
+        if (npc.data().<Boolean>get("pitsim-combat-bot", false)) {
+            // Native tracking sends the complete initial equipment. Subsequent changes
+            // go only to existing trackers and only for dirty slots, including the helmet.
+            for (int slot = 0; slot < pitEquipment.length; slot++) {
+                ItemStack equipment = getEquipment(slot);
+                if (ItemStack.equals(pitEquipment[slot], equipment)) continue;
+                pitEquipment[slot] = equipment == null ? null : equipment.cloneItemStack();
+                ((WorldServer)world).getTracker().a(this, new PacketPlayOutEntityEquipment(getId(), slot, equipment));
+            }
+            return;
+        }
         boolean itemChanged = false;
         for (int slot = 0; slot < this.inventory.armor.length; slot++) {
             ItemStack equipment = getEquipment(slot);
@@ -442,6 +457,11 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
 
     public void updatePathfindingRange(float pathfindingRange) {
         this.navigation.setRange(pathfindingRange);
+    }
+
+    static boolean shouldScanItems(boolean pitBot, int requestedInterval, int tick, int entityId) {
+        int interval = pitBot ? Math.max(1, Math.min(4, requestedInterval)) : 1;
+        return Math.floorMod((long)tick + entityId, interval) == 0;
     }
 
     public static class PlayerNPC extends CraftPlayer implements NPCHolder, SkinnableEntity {

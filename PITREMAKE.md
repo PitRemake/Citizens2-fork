@@ -15,7 +15,7 @@ for the duration of `updatePlayer()` and clears it in `finally`.
 `scripts/build-pitremake.py` compiles the changed upstream source against the
 SHA-256-pinned official build 2803 JAR and the 1.8.8 server API. It replaces
 the 1.8.8 tracker and human NPC controller classes and marks the plugin version
-`2.0.30-PitRemake.3`. The full historical
+`2.0.30-PitRemake.5`. The full historical
 Maven reactor is retained for source review; the narrow build avoids reliance
 on abandoned dependency repositories and gives CI a reproducible base check.
 
@@ -49,3 +49,13 @@ after joining and neither type kept flashing while the viewer stayed nearby.
 Minecraft 1.8.9 uses the same player-info entry for skins and the tab overlay;
 a brief entry on an initial spawn is possible for a textured player NPC
 without changing the client. The repeated one-second refresh is eliminated.
+
+Revision 4 retains the no-op NPC `queuePacket` override and its compiled-artifact
+gate, preventing WindSpigot's unflushed NPC connections from retaining packets.
+Revision 5 adds managed-bot optimizations in `EntityHumanNPC`: Pit explicitly
+opts into staggered item scans every four ticks; all other NPCs still scan each
+tick. Equipment snapshots include all five slots, clone NBT, and send only
+changed slots to native trackers. Initial/range-entry equipment remains owned
+by the native tracker. Native physics, movement and knockback are unchanged.
+The offline Wind tests exercise packet retention, ordinary-player delivery,
+scan bounds/staggering, hand/helmet updates, in-place NBT edits and removal.
