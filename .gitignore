@@ -12,3 +12,4 @@ bin/
 dependency-reduced-pom.xml
 *.jardesc
 *.lnk
+__pycache__/
