@@ -4,7 +4,8 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -34,7 +35,7 @@ import net.citizensnpcs.util.NMS;
  */
 class ProfileFetchThread implements Runnable {
     private final Deque<ProfileRequest> queue = new ArrayDeque<ProfileRequest>();
-    private final Map<String, ProfileRequest> requested = new HashMap<String, ProfileRequest>(40);
+    private final Map<String, ProfileRequest> requested = new LinkedHashMap<String, ProfileRequest>(40, .75f, true);
     private final Object sync = new Object(); // sync for queue & requested fields
 
     ProfileFetchThread() {
@@ -62,8 +63,11 @@ class ProfileFetchThread implements Runnable {
                 request = new ProfileRequest(name, handler);
                 queue.add(request);
                 requested.put(name, request);
+                trimCache();
                 return;
-            } else if (request.getResult() == ProfileFetchResult.TOO_MANY_REQUESTS) {
+            } else if (request.getResult() == ProfileFetchResult.TOO_MANY_REQUESTS
+                    || request.getResult() == ProfileFetchResult.FAILED) {
+                request.resetForRetry();
                 queue.add(request);
             }
         }
@@ -87,9 +91,11 @@ class ProfileFetchThread implements Runnable {
         synchronized (sync) {
             request = requested.get(name);
             if (request != null) {
-                if (request.getResult() == ProfileFetchResult.TOO_MANY_REQUESTS) {
+                if (request.getResult() == ProfileFetchResult.TOO_MANY_REQUESTS
+                        || request.getResult() == ProfileFetchResult.FAILED) {
+                    request.resetForRetry();
                     queue.add(request);
-                } else {
+                } else if (request.getResult() != ProfileFetchResult.PENDING) {
                     requested.remove(name);
                     queue.remove(request);
                     request = null;
@@ -99,6 +105,7 @@ class ProfileFetchThread implements Runnable {
                 request = new ProfileRequest(name, handler);
                 queue.add(request);
                 requested.put(name, request);
+                trimCache();
                 return;
             }
         }
@@ -110,6 +117,16 @@ class ProfileFetchThread implements Runnable {
             } else {
                 sendResult(handler, request);
             }
+        }
+    }
+
+    // Retain hot completed results, without holding every historical bot name
+    // for the whole uptime. In-flight requests stay pinned until completion.
+    private void trimCache() {
+        Iterator<ProfileRequest> entries = requested.values().iterator();
+        while (requested.size() > 2048 && entries.hasNext()) {
+            ProfileRequest request = entries.next();
+            if (request.getResult() != ProfileFetchResult.PENDING) entries.remove();
         }
     }
 
@@ -164,7 +181,12 @@ class ProfileFetchThread implements Runnable {
                     return;
 
                 try {
-                    request.setResult(NMS.fillProfileProperties(profile, true), ProfileFetchResult.SUCCESS);
+                    GameProfile filled = NMS.fillProfileProperties(profile, true);
+                    if (filled == null || filled.getProperties().get("textures").isEmpty()) {
+                        request.setResult(null, ProfileFetchResult.FAILED);
+                    } else {
+                        request.setResult(filled, ProfileFetchResult.SUCCESS);
+                    }
                 } catch (Throwable e) {
                     if (Messaging.isDebugging()) {
                         Messaging.debug("Filling profile lookup for player '" + profile.getName() + "' failed: "
@@ -190,11 +212,21 @@ class ProfileFetchThread implements Runnable {
             if (queue.isEmpty())
                 return;
 
-            requests = new ArrayList<ProfileRequest>(queue);
-            queue.clear();
+            requests = new ArrayList<ProfileRequest>(Math.min(50, queue.size()));
+            while (!queue.isEmpty() && requests.size() < 50) requests.add(queue.removeFirst());
+            trimCache();
         }
 
-        fetchRequests(requests);
+        try {
+            fetchRequests(requests);
+        } catch (RuntimeException failure) {
+            // A repository/network failure must not leave the whole batch
+            // permanently PENDING and its handlers retained forever.
+            for (ProfileRequest request : requests) {
+                if (request.getResult() == ProfileFetchResult.PENDING)
+                    request.setResult(null, ProfileFetchResult.FAILED);
+            }
+        }
     }
 
     private static void addHandler(final ProfileRequest request, final ProfileFetchHandler handler) {

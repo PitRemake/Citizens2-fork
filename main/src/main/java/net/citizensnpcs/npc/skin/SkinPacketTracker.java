@@ -19,6 +19,8 @@ import com.google.common.base.Preconditions;
 import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.util.NMS;
+import net.citizensnpcs.nms.v1_8_R3.entity.EntityHumanNPC;
+import net.citizensnpcs.nms.v1_8_R3.util.PitSkinProfiles;
 
 /**
  * Handles and synchronizes add and remove packets for Player type NPC's in order to properly apply the NPC skin.
@@ -30,7 +32,7 @@ import net.citizensnpcs.util.NMS;
 public class SkinPacketTracker {
     private final SkinnableEntity entity;
     private final Map<UUID, PlayerEntry> inProgress = new HashMap<UUID, PlayerEntry>(
-            Math.max(128, Math.min(1024, Bukkit.getMaxPlayers() / 2)));
+            4);
     private boolean isRemoved;
     private Skin skin;
 
@@ -45,6 +47,7 @@ public class SkinPacketTracker {
 
         this.entity = entity;
         this.skin = Skin.get(entity);
+        if (isPitTabHidden()) PitSkinProfiles.start();
 
         if (LISTENER == null) {
             LISTENER = new PlayerListener();
@@ -96,7 +99,7 @@ public class SkinPacketTracker {
      */
     public void notifySkinChange(boolean forceUpdate) {
         this.skin = Skin.get(entity, forceUpdate);
-        skin.applyAndRespawn(entity);
+        if (skin != null) skin.applyAndRespawn(entity);
     }
 
     /**
@@ -108,6 +111,12 @@ public class SkinPacketTracker {
      */
     public void onRemoveNPC() {
         isRemoved = true;
+        for (PlayerEntry entry : inProgress.values()) entry.cancel();
+        inProgress.clear();
+        if (entity instanceof EntityHumanNPC && isPitTabHidden()) {
+            PitSkinProfiles.removed((EntityHumanNPC) entity);
+            return;
+        }
 
         Collection<? extends Player> players = Bukkit.getOnlinePlayers();
 

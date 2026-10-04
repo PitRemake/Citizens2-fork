@@ -93,6 +93,13 @@ public class ProfileRequest {
         return result;
     }
 
+    // A retry needs fresh one-shot handlers. Keeping FAILED/429 here invokes
+    // the new handler immediately with the old result instead of the new fetch.
+    void resetForRetry() {
+        profile = null;
+        result = ProfileFetchResult.PENDING;
+    }
+
     /**
      * Invoked to set the profile result.
      *

@@ -1,7 +1,6 @@
 package net.citizensnpcs.npc.skin;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -15,6 +14,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
+import com.google.common.cache.CacheBuilder;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 
@@ -131,6 +131,10 @@ public class Skin {
     public void applyAndRespawn(SkinnableEntity entity) {
         Preconditions.checkNotNull(entity);
 
+        NPC current = entity.getNPC();
+        if (!current.isSpawned() || current.getEntity() != entity.getBukkitEntity()
+                || !skinName.equalsIgnoreCase(entity.getSkinName())) return;
+
         if (!apply(entity))
             return;
 
@@ -142,6 +146,9 @@ public class Skin {
         Bukkit.getServer().getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), new Runnable() {
             @Override
             public void run() {
+                // An async result for an old entity must not respawn the NPC
+                // that now owns a replacement entity (or has been removed).
+                if (!npc.isSpawned() || npc.getEntity() != entity.getBukkitEntity()) return;
                 npc.despawn(DespawnReason.PENDING_RESPAWN);
                 npc.spawn(npc.getStoredLocation(), SpawnReason.RESPAWN);
             }
@@ -149,11 +156,14 @@ public class Skin {
     }
 
     private void fetch() {
+        if (fetching || retryTask != null) return;
         final int maxRetries = Setting.MAX_NPC_SKIN_RETRIES.asInt();
         if (maxRetries > -1 && fetchRetries >= maxRetries) {
             if (Messaging.isDebugging()) {
                 Messaging.debug("Reached max skin fetch retries for '" + skinName + "'");
             }
+            hasFetched = true;
+            pending.clear();
             return;
         }
 
@@ -173,22 +183,30 @@ public class Skin {
         ProfileFetcher.fetch(this.skinName, new ProfileFetchHandler() {
             @Override
             public void onResult(ProfileRequest request) {
-                hasFetched = true;
+                fetching = false;
+                retryTask = null;
+                hasFetched = request.getResult() == net.citizensnpcs.npc.profile.ProfileFetchResult.SUCCESS
+                        || request.getResult() == net.citizensnpcs.npc.profile.ProfileFetchResult.NOT_FOUND;
 
                 switch (request.getResult()) {
                     case NOT_FOUND:
                         isValid = false;
                         break;
+                    case FAILED:
                     case TOO_MANY_REQUESTS:
                         if (maxRetries == 0) {
+                            hasFetched = true;
+                            pending.clear();
                             break;
                         }
                         fetchRetries++;
-                        long delay = Setting.NPC_SKIN_RETRY_DELAY.asLong();
+                        long delay = Math.max(20, Setting.NPC_SKIN_RETRY_DELAY.asLong())
+                                * (1L << Math.min(3, Math.max(0, fetchRetries)));
                         retryTask = Bukkit.getScheduler().runTaskLater(CitizensAPI.getPlugin(), new Runnable() {
                             @Override
                             public void run() {
-                                fetch();
+                                retryTask = null;
+                                if (hasPendingEntities()) fetch();
                             }
                         }, delay);
 
@@ -208,11 +226,14 @@ public class Skin {
     }
 
     private void fetchForced() {
+        if (fetching || retryTask != null) return;
         final int maxRetries = Setting.MAX_NPC_SKIN_RETRIES.asInt();
         if (maxRetries > -1 && fetchRetries >= maxRetries) {
             if (Messaging.isDebugging()) {
                 Messaging.debug("Reached max skin fetch retries for '" + skinName + "'");
             }
+            hasFetched = true;
+            pending.clear();
             return;
         }
         if (skinName.length() < 3 || skinName.length() > 16) {
@@ -231,22 +252,30 @@ public class Skin {
         ProfileFetcher.fetchForced(this.skinName, new ProfileFetchHandler() {
             @Override
             public void onResult(ProfileRequest request) {
-                hasFetched = true;
+                fetching = false;
+                retryTask = null;
+                hasFetched = request.getResult() == net.citizensnpcs.npc.profile.ProfileFetchResult.SUCCESS
+                        || request.getResult() == net.citizensnpcs.npc.profile.ProfileFetchResult.NOT_FOUND;
 
                 switch (request.getResult()) {
                     case NOT_FOUND:
                         isValid = false;
                         break;
+                    case FAILED:
                     case TOO_MANY_REQUESTS:
                         if (maxRetries == 0) {
+                            hasFetched = true;
+                            pending.clear();
                             break;
                         }
                         fetchRetries++;
-                        long delay = Setting.NPC_SKIN_RETRY_DELAY.asLong();
+                        long delay = Math.max(20, Setting.NPC_SKIN_RETRY_DELAY.asLong())
+                                * (1L << Math.min(3, Math.max(0, fetchRetries)));
                         retryTask = Bukkit.getScheduler().runTaskLater(CitizensAPI.getPlugin(), new Runnable() {
                             @Override
                             public void run() {
-                                fetchForced();
+                                retryTask = null;
+                                if (hasPendingEntities()) fetchForced();
                             }
                         }, delay);
 
@@ -263,6 +292,13 @@ public class Skin {
                 }
             }
         });
+    }
+
+    private boolean hasPendingEntities() {
+        pending.keySet().removeIf(entity -> !entity.getNPC().isSpawned()
+                || entity.getNPC().getEntity() != entity.getBukkitEntity()
+                || !skinName.equalsIgnoreCase(entity.getSkinName()));
+        return !pending.isEmpty();
     }
 
     /**
@@ -360,6 +396,7 @@ public class Skin {
      */
     public static Skin get(SkinnableEntity entity, boolean forceUpdate) {
         Preconditions.checkNotNull(entity);
+        if (entity.getNPC().data().get("pitsim-skinless", false)) return null;
 
         String skinName = entity.getSkinName().toLowerCase();
         return get(skinName, forceUpdate);
@@ -426,7 +463,8 @@ public class Skin {
         profile.getProperties().put("textures", skinProperty);
     }
 
-    private static final Map<String, Skin> CACHE = new HashMap<String, Skin>(20);
+    private static final Map<String, Skin> CACHE = CacheBuilder.newBuilder()
+            .maximumSize(2048).weakValues().<String, Skin>build().asMap();
     public static final String CACHED_SKIN_UUID_METADATA = "cached-skin-uuid";
     public static final String CACHED_SKIN_UUID_NAME_METADATA = "cached-skin-uuid-name";
 }

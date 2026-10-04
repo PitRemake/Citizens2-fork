@@ -22,10 +22,15 @@ SOURCES = {
     "net/citizensnpcs/nms/v1_8_R3/entity/HumanController.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/entity/HumanController.java",
     "net/citizensnpcs/npc/skin/SkinPacketTracker.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/skin/SkinPacketTracker.java",
     "net/citizensnpcs/nms/v1_8_R3/network/EmptyNetHandler.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/network/EmptyNetHandler.java",
+    "net/citizensnpcs/nms/v1_8_R3/util/PitSkinProfiles.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/util/PitSkinProfiles.java",
+    "net/citizensnpcs/npc/skin/SkinUpdateTracker.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/skin/SkinUpdateTracker.java",
+    "net/citizensnpcs/npc/skin/Skin.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/skin/Skin.java",
+    "net/citizensnpcs/npc/profile/ProfileFetchThread.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/profile/ProfileFetchThread.java",
+    "net/citizensnpcs/npc/profile/ProfileRequest.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/profile/ProfileRequest.java",
 }
 BASE_SHA256 = "54e5ef9db95a6a6f68a2bbbb1a3eeb2770087afd8ad880218855292a4618fda7"
 UPSTREAM_VERSION = "2.0.30-SNAPSHOT (build 2803)"
-FORK_VERSION = "2.0.30-PitRemake.5"
+FORK_VERSION = "2.0.30-PitRemake.9"
 QUEUE_HANDLER = "net/citizensnpcs/nms/v1_8_R3/network/EmptyNetHandler.class"
 QUEUE_DESCRIPTOR = "(Lnet/minecraft/server/v1_8_R3/Packet;)V"
 
@@ -135,7 +140,8 @@ def build(base, server, javac, output):
         staged = classes / "Citizens.jar"
         with zipfile.ZipFile(base) as original, zipfile.ZipFile(staged, "w") as target:
             original_names = set(original.namelist())
-            if not set(SOURCES).issubset(original_names):
+            new_classes = {"net/citizensnpcs/nms/v1_8_R3/util/PitSkinProfiles.class"}
+            if not (set(SOURCES) - new_classes).issubset(original_names):
                 raise ValueError("Pinned Citizens build is missing a patched class")
             for item in original.infolist():
                 data = replacements.get(item.filename, original.read(item.filename))
@@ -153,7 +159,19 @@ def build(base, server, javac, output):
                 if name not in original_names:
                     target.writestr(name, data)
         verify_artifact(staged, replacements)
-        os.replace(staged, output)
+        # Publish from the destination directory. On Windows, moving the JAR
+        # directly out of a private TEMP directory preserves its restrictive
+        # ACL and prevents the server's user from reading the resulting file.
+        with tempfile.NamedTemporaryFile(dir=output.parent, prefix="." + output.name + "-",
+                                         suffix=".tmp", delete=False) as publish:
+            publish.write(staged.read_bytes())
+            candidate = pathlib.Path(publish.name)
+        try:
+            verify_artifact(candidate, replacements)
+            os.replace(candidate, output)
+        finally:
+            if candidate.exists():
+                candidate.unlink()
     print(str(output))
     print(digest(output))
 
