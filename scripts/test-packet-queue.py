@@ -24,7 +24,10 @@ def run(artifact, old_artifact, server, javac, java, baseline=None, libraries=No
                         "-d", str(classes), str(ROOT / "tests/NpcPacketQueueCompatibility.java"),
                         str(ROOT / "tests/NpcBotOptimizationCompatibility.java"),
                         str(ROOT / "tests/NpcSkinVisibilityCompatibility.java"),
-                        str(ROOT / "tests/NpcSkinCpuRecoveryCompatibility.java")], check=True)
+                        str(ROOT / "tests/NpcSkinCpuRecoveryCompatibility.java"),
+                        str(ROOT / "tests/NpcUtilityCompatibility.java")], check=True)
+        subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
+                        "NpcUtilityCompatibility"], cwd=classes, check=True)
         subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
                         "NpcPacketQueueCompatibility"], cwd=classes, check=True)
         subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,

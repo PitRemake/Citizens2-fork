@@ -17,6 +17,7 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCES = {
+    "net/citizensnpcs/util/Util.class": ROOT / "main/src/main/java/net/citizensnpcs/util/Util.java",
     "net/citizensnpcs/nms/v1_8_R3/entity/EntityHumanNPC.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/entity/EntityHumanNPC.java",
     "net/citizensnpcs/nms/v1_8_R3/util/PlayerlistTrackerEntry.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/util/PlayerlistTrackerEntry.java",
     "net/citizensnpcs/nms/v1_8_R3/entity/HumanController.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/entity/HumanController.java",
@@ -30,7 +31,7 @@ SOURCES = {
 }
 BASE_SHA256 = "54e5ef9db95a6a6f68a2bbbb1a3eeb2770087afd8ad880218855292a4618fda7"
 UPSTREAM_VERSION = "2.0.30-SNAPSHOT (build 2803)"
-FORK_VERSION = "2.0.30-PitRemake.9"
+FORK_VERSION = "2.0.30-PitRemake.10"
 QUEUE_HANDLER = "net/citizensnpcs/nms/v1_8_R3/network/EmptyNetHandler.class"
 QUEUE_DESCRIPTOR = "(Lnet/minecraft/server/v1_8_R3/Packet;)V"
 

@@ -45,6 +45,21 @@ import net.citizensnpcs.api.util.SpigotUtil;
 import net.md_5.bungee.api.ChatColor;
 
 public class Util {
+    // Resolve optional newer Bukkit methods once; the pinned fork compiles on 1.8.
+    private static final java.lang.reflect.Method ENTITY_HAND = optionalMethod(PlayerInteractEntityEvent.class, "getHand");
+    private static final java.lang.reflect.Method PLAYER_HAND = optionalMethod(PlayerInteractEvent.class, "getHand");
+    private static final java.lang.reflect.Method MATERIAL_MATCH = optionalMethod(Material.class, "matchMaterial", String.class, boolean.class);
+
+    private static java.lang.reflect.Method optionalMethod(Class<?> type, String name, Class<?>... parameters) {
+        try { return type.getMethod(name, parameters); }
+        catch (NoSuchMethodException absent) { return null; }
+    }
+
+    private static boolean offHand(Object event, java.lang.reflect.Method method) {
+        if (method == null) return false;
+        try { return "OFF_HAND".equals(((Enum<?>) method.invoke(event)).name()); }
+        catch (ReflectiveOperationException failure) { throw new IllegalStateException("Cannot inspect interaction hand", failure); }
+    }
     private Util() {
     }
 
@@ -220,9 +235,10 @@ public class Util {
     }
 
     public static boolean isAlwaysFlyable(EntityType type) {
-        if (type.name().toLowerCase().equals("vex") || type.name().toLowerCase().equals("parrot")
-                || type.name().toLowerCase().equals("allay") || type.name().toLowerCase().equals("bee")
-                || type.name().toLowerCase().equals("phantom"))
+        String name = type.name();
+        if (name.equalsIgnoreCase("vex") || name.equalsIgnoreCase("parrot")
+                || name.equalsIgnoreCase("allay") || name.equalsIgnoreCase("bee")
+                || name.equalsIgnoreCase("phantom"))
             // 1.8.8 compatibility
             return true;
         switch (type) {
@@ -252,23 +268,11 @@ public class Util {
     }
 
     public static boolean isOffHand(PlayerInteractEntityEvent event) {
-        try {
-            return event.getHand() == org.bukkit.inventory.EquipmentSlot.OFF_HAND;
-        } catch (NoSuchMethodError e) {
-            return false;
-        } catch (NoSuchFieldError e) {
-            return false;
-        }
+        return offHand(event, ENTITY_HAND);
     }
 
     public static boolean isOffHand(PlayerInteractEvent event) {
-        try {
-            return event.getHand() == org.bukkit.inventory.EquipmentSlot.OFF_HAND;
-        } catch (NoSuchMethodError e) {
-            return false;
-        } catch (NoSuchFieldError e) {
-            return false;
-        }
+        return offHand(event, PLAYER_HAND);
     }
 
     public static String listValuesPretty(Enum<?>[] values) {
@@ -305,8 +309,7 @@ public class Util {
         if (parts.contains("*") || parts.isEmpty())
             return true;
         for (String part : Splitter.on(',').split(parts)) {
-            Material matchMaterial = SpigotUtil.isUsing1_13API() ? Material.matchMaterial(part, false)
-                    : Material.matchMaterial(part);
+            Material matchMaterial = matchMaterial(part);
             if (matchMaterial == null) {
                 if (part.equals("280")) {
                     matchMaterial = Material.STICK;
@@ -319,6 +322,12 @@ public class Util {
             }
         }
         return false;
+    }
+
+    private static Material matchMaterial(String name) {
+        if (!SpigotUtil.isUsing1_13API() || MATERIAL_MATCH == null) return Material.matchMaterial(name);
+        try { return (Material) MATERIAL_MATCH.invoke(null, name, false); }
+        catch (ReflectiveOperationException failure) { throw new IllegalStateException("Cannot match material", failure); }
     }
 
     public static Set<EntityType> optionalEntitySet(String... types) {
