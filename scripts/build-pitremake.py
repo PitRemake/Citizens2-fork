@@ -17,6 +17,7 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCES = {
+    "net/citizensnpcs/nms/v1_8_R3/util/PitControlFrame.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/util/PitControlFrame.java",
     "net/citizensnpcs/util/Util.class": ROOT / "main/src/main/java/net/citizensnpcs/util/Util.java",
     "net/citizensnpcs/nms/v1_8_R3/entity/EntityHumanNPC.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/entity/EntityHumanNPC.java",
     "net/citizensnpcs/nms/v1_8_R3/util/PlayerlistTrackerEntry.class": ROOT / "v1_8_R3/src/main/java/net/citizensnpcs/nms/v1_8_R3/util/PlayerlistTrackerEntry.java",
@@ -31,7 +32,7 @@ SOURCES = {
 }
 BASE_SHA256 = "54e5ef9db95a6a6f68a2bbbb1a3eeb2770087afd8ad880218855292a4618fda7"
 UPSTREAM_VERSION = "2.0.30-SNAPSHOT (build 2803)"
-FORK_VERSION = "2.0.30-PitRemake.10"
+FORK_VERSION = "2.0.30-PitRemake.11"
 QUEUE_HANDLER = "net/citizensnpcs/nms/v1_8_R3/network/EmptyNetHandler.class"
 QUEUE_DESCRIPTOR = "(Lnet/minecraft/server/v1_8_R3/Packet;)V"
 
@@ -141,7 +142,8 @@ def build(base, server, javac, output):
         staged = classes / "Citizens.jar"
         with zipfile.ZipFile(base) as original, zipfile.ZipFile(staged, "w") as target:
             original_names = set(original.namelist())
-            new_classes = {"net/citizensnpcs/nms/v1_8_R3/util/PitSkinProfiles.class"}
+            new_classes = {"net/citizensnpcs/nms/v1_8_R3/util/PitSkinProfiles.class",
+                           "net/citizensnpcs/nms/v1_8_R3/util/PitControlFrame.class"}
             if not (set(SOURCES) - new_classes).issubset(original_names):
                 raise ValueError("Pinned Citizens build is missing a patched class")
             for item in original.infolist():

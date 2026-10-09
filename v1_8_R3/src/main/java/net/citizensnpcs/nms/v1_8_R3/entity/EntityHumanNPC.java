@@ -29,6 +29,7 @@ import net.citizensnpcs.nms.v1_8_R3.util.NMSImpl;
 import net.citizensnpcs.nms.v1_8_R3.util.PlayerControllerJump;
 import net.citizensnpcs.nms.v1_8_R3.util.PlayerControllerMove;
 import net.citizensnpcs.nms.v1_8_R3.util.PlayerNavigation;
+import net.citizensnpcs.nms.v1_8_R3.util.PitControlFrame;
 import net.citizensnpcs.nms.v1_8_R3.util.PlayerlistTrackerEntry;
 import net.citizensnpcs.npc.CitizensNPC;
 import net.citizensnpcs.npc.ai.NPCHolder;
@@ -72,6 +73,8 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     private int updateCounter = 0;
     private int pickupCounter;
     private final ItemStack[] pitEquipment = new ItemStack[5];
+    private final PitControlFrame pitControl = new PitControlFrame();
+    private boolean pitControlActive;
 
     public EntityHumanNPC(MinecraftServer minecraftServer, WorldServer world, GameProfile gameProfile,
             PlayerInteractManager playerInteractManager, NPC npc) {
@@ -144,6 +147,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
 
     @Override
     public void die(DamageSource damagesource) {
+        releasePitControl();
         // players that die are not normally removed from the world. when the
         // NPC dies, we are done with the instance and it should be removed.
         if (dead) {
@@ -279,6 +283,78 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         return npc.getNavigator().isNavigating();
     }
 
+    /** Main-thread, one-tick input for marked Pit bots; ordinary Citizens navigation is untouched. */
+    public boolean setPitControl(float yaw, float pitch, float strafe, float forward, boolean sprint, boolean jump) {
+        if (!Bukkit.isPrimaryThread()) return false;
+        if (npc == null || dead || vehicle != null || !npc.isSpawned()
+                || !npc.data().<Boolean>get("pitsim-combat-bot", false) || npc.isFlyable()
+                || npc.getNavigator().isNavigating() || controllerMove.a()) {
+            releasePitControl();
+            return false;
+        }
+        if (!pitControl.submit(ticksLived, yaw, pitch, strafe, forward, sprint, jump)) {
+            releasePitControl();
+            return false;
+        }
+        pitControlActive = true;
+        applyPitRotation();
+        setSprinting(pitControl.sprint());
+        return true;
+    }
+
+    private void applyPitRotation() {
+        yaw = pitControl.yaw();
+        pitch = pitControl.pitch();
+        // Body and head share the intended view; native tracking owns interpolation/packets.
+        aI = aJ = aK = yaw;
+    }
+
+    /** Clear queued keys before damage recovery, teleport, despawn or a held bot tick. */
+    public void clearPitControl() {
+        if (!Bukkit.isPrimaryThread()) return;
+        releasePitControl();
+    }
+
+    private void releasePitControl() {
+        if (pitControl != null) pitControl.clear();
+        if (!pitControlActive) return;
+        pitControlActive = false;
+        aZ = ba = 0F;
+        i(false);
+        jumpTicks = 0;
+        setSprinting(false);
+    }
+
+    private boolean consumePitControl() {
+        if (!pitControl.consume(ticksLived)) {
+            releasePitControl();
+            return false;
+        }
+        if (dead || vehicle != null || !npc.isSpawned() || !npc.data().<Boolean>get("pitsim-combat-bot", false)
+                || npc.isFlyable() || npc.getNavigator().isNavigating() || controllerMove.a()) {
+            releasePitControl();
+            return false;
+        }
+        applyPitRotation();
+        setSprinting(pitControl.sprint());
+        AttributeInstance speed = getAttributeInstance(GenericAttributes.MOVEMENT_SPEED);
+        // Navigation's speed multiplier must not become a persistent player-input speed boost.
+        speed.setValue(.1D);
+        k((float)speed.getValue());
+        aZ = pitControl.strafe();
+        ba = pitControl.forward();
+        i(pitControl.jump());
+        try {
+            moveOnCurrentHeading(true);
+        } finally {
+            // No held keys survive this physics step, including during knockback recovery.
+            aZ = ba = 0F;
+            i(false);
+            pitControl.clear();
+        }
+        return true;
+    }
+
     @Override
     public boolean k_() {
         if (npc == null || !npc.isFlyable()) {
@@ -297,7 +373,8 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
 
         super.K();
         boolean navigating = npc.getNavigator().isNavigating() || controllerMove.a();
-        if (!navigating && getBukkitEntity() != null
+        boolean controlled = consumePitControl();
+        if (!controlled && !navigating && getBukkitEntity() != null
                 && (!npc.hasTrait(Gravity.class) || npc.getOrAddTrait(Gravity.class).hasGravity())
                 && Util.isLoaded(getBukkitEntity().getLocation(LOADED_LOCATION))
                 && SpigotUtil.checkYSafe(locY, getBukkitEntity().getWorld())) {
@@ -306,7 +383,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         if (Math.abs(motX) < EPSILON && Math.abs(motY) < EPSILON && Math.abs(motZ) < EPSILON) {
             motX = motY = motZ = 0;
         }
-        if (navigating) {
+        if (!controlled && navigating) {
             if (!NMSImpl.isNavigationFinished(navigation)) {
                 NMSImpl.updateNavigation(navigation);
             }
@@ -337,6 +414,10 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     }
 
     private void moveOnCurrentHeading() {
+        moveOnCurrentHeading(false);
+    }
+
+    private void moveOnCurrentHeading(boolean controlled) {
         if (aY) {
             if (onGround && jumpTicks == 0) {
                 bF();
@@ -349,7 +430,8 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         ba *= 0.98F;
         bb *= 0.9F;
         moveWithFallDamage(aZ, ba); // movement method
-        NMS.setHeadYaw(getBukkitEntity(), yaw);
+        if (controlled) aI = aJ = aK = yaw;
+        else NMS.setHeadYaw(getBukkitEntity(), yaw);
         if (jumpTicks > 0) {
             jumpTicks--;
         }
