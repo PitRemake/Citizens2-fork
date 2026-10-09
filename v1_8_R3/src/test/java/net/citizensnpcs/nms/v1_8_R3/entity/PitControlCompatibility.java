@@ -85,6 +85,13 @@ public final class PitControlCompatibility {
         check(human.aZ==0F&&human.ba==0F&&!human.jumpHeld(),"Held keys survived native travel");
         check(!step(human)&&human.travels==1,"Native physics ran twice for one frame");
         check(!human.isSprinting()&&human.jumpLatch()==0,"Missing next input retained sprint/jump state");
+        TestHuman duplicateAge=human(true);
+        check(duplicateAge.setPitControl(0F,0F,0F,1F,true,false),"Server-clock frame rejected");
+        duplicateAge.ticksLived+=10;
+        check(step(duplicateAge)&&duplicateAge.travels==1,"Entity age invalidated fresh same-server-tick input");
+        check(duplicateAge.setPitControl(0F,0F,0F,1F,true,false),"Next-server-tick frame rejected");
+        duplicateAge.ticksLived+=10;MinecraftServer.currentTick++;
+        check(step(duplicateAge)&&duplicateAge.travels==2,"Duplicate entity ticks invalidated one-server-tick input");
         TestHuman diagonal=human(true);
         check(diagonal.setPitControl(0F,0F,1F,1F,true,false)&&step(diagonal),"Diagonal native input rejected");
         equal(.98D/Math.sqrt(2D),diagonal.lastStrafe,"Diagonal strafe damping");equal(.98D/Math.sqrt(2D),diagonal.lastForward,"Diagonal forward damping");
@@ -98,8 +105,8 @@ public final class PitControlCompatibility {
         human.clearPitControl();check(!human.isSprinting()&&!human.jumpHeld()&&human.jumpLatch()==0,"Explicit cancel did not release owned keys");
         equal(.35D,human.motX,"Cancel erased knockback X");equal(.12D,human.motY,"Cancel erased knockback Y");equal(-.27D,human.motZ,"Cancel erased knockback Z");
         equal(9D,human.locX,"Cancel teleported X");equal(20D,human.locY,"Cancel teleported Y");equal(30D,human.locZ,"Cancel teleported Z");
-        human.ticksLived++;human.setPitControl(20F,0F,0F,1F,true,true);check(step(human)&&human.jumps==2,"Released jump latch blocked next press");
-        human.setPitControl(30F,0F,0F,1F,true,false);human.ticksLived+=2;
+        human.ticksLived++;MinecraftServer.currentTick++;human.setPitControl(20F,0F,0F,1F,true,true);check(step(human)&&human.jumps==2,"Released jump latch blocked next press");
+        human.setPitControl(30F,0F,0F,1F,true,false);human.ticksLived+=2;MinecraftServer.currentTick+=2;
         check(!step(human)&&!human.isSprinting(),"Stale frame retained owned sprint");
         human.setPitControl(40F,0F,0F,1F,true,false);
         check(!human.setPitControl(Float.NaN,0F,0F,1F,true,false),"Invalid native input accepted");check(!step(human)&&!human.isSprinting(),"Invalid native input retained prior frame");
@@ -135,7 +142,9 @@ public final class PitControlCompatibility {
         DedicatedServer console=allocate(DedicatedServer.class);field(MinecraftServer.class,"primaryThread").set(console,Thread.currentThread());field(CraftServer.class,"console").set(server,console);
         field(CraftServer.class,"logger").set(server,Logger.getLogger("pit-control-fixture"));
         DispenserRegistry.c();consume=EntityHumanNPC.class.getDeclaredMethod("consumePitControl");consume.setAccessible(true);
-        frameRules();nativeTravel();cancellations();eligibilityAndLegacy();
+        int priorTick=MinecraftServer.currentTick;
+        try{MinecraftServer.currentTick=100;frameRules();nativeTravel();cancellations();eligibilityAndLegacy();}
+        finally{MinecraftServer.currentTick=priorTick;}
         System.out.println("PIT_CONTROL_PASS: "+checks+" checks; one native travel/jump dispatch, bounded finite input, native modifiers, cancellation/knockback, eligibility and untouched ordinary NPCs; no full world tick claim");
     }
     public static final class TestHuman extends EntityHumanNPC {

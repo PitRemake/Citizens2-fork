@@ -75,6 +75,9 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     private final ItemStack[] pitEquipment = new ItemStack[5];
     private final PitControlFrame pitControl = new PitControlFrame();
     private boolean pitControlActive;
+    private boolean pitPlayerTicked;
+    private int pitPlayerTick;
+    private int pitHurtTick;
 
     public EntityHumanNPC(MinecraftServer minecraftServer, WorldServer world, GameProfile gameProfile,
             PlayerInteractManager playerInteractManager, NPC npc) {
@@ -292,7 +295,9 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             releasePitControl();
             return false;
         }
-        if (!pitControl.submit(ticksLived, yaw, pitch, strafe, forward, sprint, jump)) {
+        // Citizens' compatibility ticker and the world can both advance entity age.
+        // Input lifetime belongs to the server tick, not those entity callbacks.
+        if (!pitControl.submit(MinecraftServer.currentTick, yaw, pitch, strafe, forward, sprint, jump)) {
             releasePitControl();
             return false;
         }
@@ -326,7 +331,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     }
 
     private boolean consumePitControl() {
-        if (!pitControl.consume(ticksLived)) {
+        if (!pitControl.consume(MinecraftServer.currentTick)) {
             releasePitControl();
             return false;
         }
@@ -479,9 +484,29 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         this.trackerEntry = trackerEntry;
     }
 
+    /** Native player-maintenance entries, independent of duplicate world entity ages.
+     * Int wrapping matches native timer-deadline arithmetic; this is not a cooldown.
+     */
+    public int getPitHurtTick() {
+        return pitHurtTick;
+    }
+
     @Override
     public void t_() {
-        super.t_();
+        if (npc == null || !npc.data().<Boolean>get("pitsim-combat-bot", false)) {
+            pitPlayerTicked = false;
+            pitHurtTick++;
+            super.t_();
+        } else if (!pitPlayerTicked || pitPlayerTick != MinecraftServer.currentTick) {
+            // Wind's entity pass and Citizens' compatibility ticker can both call
+            // this method in one server tick. Native player maintenance, including
+            // hurt immunity, must advance only once. Stamp before callbacks so a
+            // nested invocation cannot repeat it; keep Citizens' work below intact.
+            pitPlayerTicked = true;
+            pitPlayerTick = MinecraftServer.currentTick;
+            pitHurtTick++;
+            super.t_();
+        }
         if (npc == null)
             return;
         if (updateCounter + 1 > Setting.PACKET_UPDATE_DELAY.asInt()) {
