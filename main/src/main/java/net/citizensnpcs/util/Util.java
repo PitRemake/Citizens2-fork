@@ -235,6 +235,8 @@ public class Util {
     }
 
     public static boolean isAlwaysFlyable(EntityType type) {
+        if (type == EntityType.PLAYER)
+            return false;
         String name = type.name();
         if (name.equalsIgnoreCase("vex") || name.equalsIgnoreCase("parrot")
                 || name.equalsIgnoreCase("allay") || name.equalsIgnoreCase("bee")

@@ -40,19 +40,27 @@ public final class PitSkinProfiles implements Listener, Runnable {
 
     public static synchronized void add(EntityPlayer viewer, EntityHumanNPC entity) {
         sendOrdered(viewer, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.ADD_PLAYER, entity));
+        if (entity.isPitTabListed()) {
+            // Real players stay in tab: no tracking REMOVE. A pending removal of an
+            // older entity with this profile must not erase the listed row.
+            Map<UUID, Removal> entries = PENDING.get(viewer);
+            if (entries != null && entries.remove(entity.getProfile().getId()) != null && entries.isEmpty())
+                PENDING.remove(viewer);
+            return;
+        }
         // The native tracker queues REMOVE immediately after SPAWN for these
         // entities. Do not retain a viewer/entity or schedule a skin window.
-        if (skinless(entity.getNPC())) return;
+        if (entity.isPitSkinless()) return;
         Map<UUID, Removal> entries = PENDING.get(viewer);
         if (entries == null) PENDING.put(viewer, entries = new HashMap<>());
         // Bots need a render pass to cache their skin, but a full second of
         // profile lifetime causes visible tab flashes on every life/range entry.
         // Keeper and other ordinary NPC policies remain unchanged.
-        boolean bot = entity.getNPC().data().get("pitsim-combat-bot", false);
+        boolean bot = entity.isPitCombatBot();
         int minimum = bot ? 2 : 20;
         int fallback = bot ? 2 : Math.max(20, Setting.TABLIST_REMOVE_PACKET_DELAY.asInt());
-        int delay = Math.max(minimum, Math.min(100, entity.getNPC().data().<Integer>get(
-                "pitsim-skin-profile-ticks", fallback)));
+        Integer requested = entity.getPitSkinProfileTicks();
+        int delay = Math.max(minimum, Math.min(100, requested == null ? fallback : requested));
         // New ADD supersedes old removal. Viewer identity fences reconnects.
         entries.put(entity.getProfile().getId(), new Removal(entity, tick + delay));
         nextDue = Math.min(nextDue, tick + delay);
@@ -62,7 +70,13 @@ public final class PitSkinProfiles implements Listener, Runnable {
         return manages(npc) && npc.data().get("pitsim-skinless", false);
     }
 
+    /** Main thread metadata read; tracker workers use {@link EntityHumanNPC#isPitTabListed()}. */
+    public static boolean tabListed(NPC npc) {
+        return manages(npc) && npc.data().get("pitsim-tab-listed", false);
+    }
+
     public static void completeSkinlessSpawn(EntityPlayer viewer, EntityHumanNPC entity) {
+        if (entity.isPitTabListed()) return;
         sendOrdered(viewer, new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.REMOVE_PLAYER, entity));
     }
 
@@ -75,6 +89,18 @@ public final class PitSkinProfiles implements Listener, Runnable {
                 removal.due = Math.min(removal.due, tick + 2);
                 nextDue = Math.min(nextDue, removal.due);
             }
+        }
+    }
+
+    /** Citizens despawn of a tab-listed NPC: its row leaves every viewer's tab list. */
+    public static synchronized void despawnTabListed(EntityHumanNPC entity) {
+        removed(entity);
+        Packet<?> remove = new PacketPlayOutPlayerInfo(PacketPlayOutPlayerInfo.EnumPlayerInfoAction.REMOVE_PLAYER, entity);
+        for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
+            if (!(player instanceof CraftPlayer)) continue;
+            EntityPlayer viewer = ((CraftPlayer) player).getHandle();
+            if (viewer instanceof EntityHumanNPC) continue;
+            sendOrdered(viewer, remove);
         }
     }
 

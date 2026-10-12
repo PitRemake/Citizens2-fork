@@ -98,3 +98,45 @@ respawn, reconnect cleanup, concurrent viewers and batched expiry. Supply
 checks with Citizens' cached relocated runtime libraries, and optionally
 `--baseline-artifact <revision5.jar>` for work comparisons. No network fetches
 are needed by those fixtures. See `docs/VISIBILITY-CPU-20261003.md`.
+
+Revision 15 (`2.0.30-PitRemake.15`):
+
+- Marked combat bots run the whole Citizens part of `EntityHumanNPC.t_()`
+  (packet/equipment polling, `npc.update()` traits/goals/navigator, update
+  counter) once per `MinecraftServer.currentTick`, behind the same gate as the
+  native player maintenance. Wind's entity pass and `PlayerUpdateTask` both call
+  `t_()`; the duplicate or nested call now returns early. `l()`, Pit input,
+  knockback and `getPitHurtTick()` are unchanged. Unmarked NPCs are unchanged,
+  except that `bukkit.broadcast.user` is unsubscribed once per spawned entity
+  instead of every tick (all NPCs).
+- PitRemake markers are snapshotted on the main thread (construction and the
+  start of every `t_()`) into volatile fields. Tracker workers
+  (`PlayerlistTrackerEntry`, `PitSkinProfiles`) read the snapshot instead of
+  Citizens' unsynchronized metadata map. `refreshPitMarkers()` is public for
+  fixtures. `Util.isAlwaysFlyable(PLAYER)` returns early; teleport-correction
+  reflection fields are resolved once.
+
+Tab-listed bots (`pitsim-tab-listed`). Contract, set on the NPC **before
+`npc.spawn(...)`** so the construction-time snapshot sees it (a later change is
+picked up by the next `t_()`, within one tick):
+
+- `pitsim-combat-bot` = true and `pitsim-tab-listed` = true (boolean data).
+- `NPC.Metadata.REMOVE_FROM_PLAYERLIST` (`removefromplayerlist`) = false if the
+  bot should stay in the server's `world.players` (no packets either way).
+- Optional: drop `pitsim-skinless` and apply a pre-signed skin with
+  `SkinTrait.setSkinPersistent(name, signature, texture)` before spawn.
+  `pitsim-skinless` with `pitsim-tab-listed` is also supported (default skin).
+
+Behaviour: every tracker admission (join, range re-entry, tracker replacement,
+new entity) queues ADD_PLAYER then the native SPAWN on Wind's connection queue,
+exactly as before. No tracking path sends or schedules REMOVE_PLAYER (no skin
+window, no skinless same-pass removal, range exit sends only the native
+destroy); a new ADD also cancels a pending removal left by an older unlisted
+entity with the same profile. REMOVE_PLAYER is queued to every real online
+player only when Citizens despawns the entity (`SkinPacketTracker.onRemoveNPC`).
+Gameplay owns the global rows: send ADD_PLAYER to all players so the row exists
+outside tracking range, and re-send it after entity recreation. Send that re-ADD
+through `PlayerConnection.queuePacket` (or on a later tick); a direct send in the
+same tick can be overtaken by the queued despawn REMOVE. `isPitTabHidden`
+returns false for these bots; serialized admission and teleport correction still
+apply. Skinless, Keeper and ordinary NPC packet sequences are unchanged.

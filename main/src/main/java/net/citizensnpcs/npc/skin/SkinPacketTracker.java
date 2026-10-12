@@ -114,7 +114,9 @@ public class SkinPacketTracker {
         for (PlayerEntry entry : inProgress.values()) entry.cancel();
         inProgress.clear();
         if (entity instanceof EntityHumanNPC && isPitTabHidden()) {
-            PitSkinProfiles.removed((EntityHumanNPC) entity);
+            // Tab-listed bots keep their row until the entity actually despawns.
+            if (PitSkinProfiles.tabListed(entity.getNPC())) PitSkinProfiles.despawnTabListed((EntityHumanNPC) entity);
+            else PitSkinProfiles.removed((EntityHumanNPC) entity);
             return;
         }
 

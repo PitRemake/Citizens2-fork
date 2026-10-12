@@ -23,6 +23,7 @@ public final class PitHurtClockCompatibility {
     private static Unsafe unsafe;
     private static TestServer console;
     private static NMSImpl nms;
+    private static CountingPlugins plugins;
     private static Method hurtTickGetter;
     private static int checks;
     private static Field field(Class<?> type, String name) throws Exception {
@@ -67,6 +68,7 @@ public final class PitHurtClockCompatibility {
         fixture.human.activeContainer = fixture.container = new TestContainer();
         fixture.bukkit = allocate(TestPlayer.class); fixture.bukkit.handle = fixture.human;
         fixture.bukkit.id = UUID.randomUUID(); fixture.human.bukkit = fixture.bukkit;
+        field(Entity.class, "bukkitEntity").set(fixture.human, fixture.bukkit);
         fixture.npc.human = fixture.human;
         return fixture;
     }
@@ -78,7 +80,7 @@ public final class PitHurtClockCompatibility {
         MinecraftServer.currentTick = 100;
         Fixture f = fixture(true);
         both(f);
-        equal(2, f.npc.updates, "Citizens update was lost on a duplicate NPC path");
+        equal(1, f.npc.updates, "Citizens update/trait work repeated on a duplicate NPC path");
         equal(2, f.human.ticksLived, "World entity age ownership changed");
         check(hit(f.human, 7F), "Initial full hit rejected (hp=" + f.human.getHealth() + ",timer=" + f.human.noDamageTicks + ",invul=" + f.human.invulnerableTicks + ",applied=" + f.human.applied + ")");
         both(f);
@@ -89,6 +91,7 @@ public final class PitHurtClockCompatibility {
         for(int tick = 101; tick < 110; tick++) {
             MinecraftServer.currentTick = tick; both(f);
             equal(120 - tick, f.human.noDamageTicks, "NPC hurt timer aged faster than the server clock");
+            equal(tick - 99, f.npc.updates, "Citizens update/trait work did not run exactly once per server tick");
             check(!hit(f.human, 7F) && !hit(f.human, 5F), "Equal/weaker hit admitted before ten actual ticks");
         }
         MinecraftServer.currentTick = 110; both(f);
@@ -98,6 +101,8 @@ public final class PitHurtClockCompatibility {
         check(f.human.applied.equals(Arrays.asList(7F, 7F)), "Equal-hit application changed: " + f.human.applied);
         equal(11, f.interaction.steps, "Native maintenance count does not match actual server ticks");
         equal(11, hurtTick(f.human), "Native receipt count diverged from actual maintenance entries");
+        equal(11, f.npc.updates, "Citizens update count does not match actual server ticks");
+        equal(1, plugins.count(f.bukkit), "Broadcast permission unsubscribe was not once per spawned entity");
     }
     private static void strongerFreshAndCancelled() throws Exception {
         MinecraftServer.currentTick = 200; Fixture f = fixture(true); both(f);
@@ -142,7 +147,7 @@ public final class PitHurtClockCompatibility {
         equal(1, f.interaction.steps, "Reentrant interaction repeated native work");
         equal(1, f.container.steps, "Reentrant container repeated native work");
         equal(20, f.human.noDamageTicks, "Fresh callback hit aged on the second NPC path");
-        equal(4, f.npc.updates, "NPC updates were lost during native/reentrant calls");
+        equal(1, f.npc.updates, "Nested/duplicate calls repeated Citizens update work");
         Fixture fresh = fixture(true); MinecraftServer.currentTick++;
         fresh.interaction.callback = () -> { check(hit(fresh.human, 7F), "Fresh interaction callback hit rejected"); };
         both(fresh); equal(19, fresh.human.noDamageTicks, "First native tick no longer ages pre-decrement interaction hit");
@@ -172,6 +177,7 @@ public final class PitHurtClockCompatibility {
         Fixture ordinary = fixture(false); ordinary.human.noDamageTicks = 20; MinecraftServer.currentTick++;
         both(ordinary); equal(18, ordinary.human.noDamageTicks, "Unmarked Citizens native behavior changed");
         equal(2, hurtTick(ordinary.human), "Unmarked native entries were not counted");
+        equal(1, plugins.count(ordinary.bukkit), "Unmarked broadcast unsubscribe was not once per spawned entity");
         equal(2, ordinary.interaction.steps, "Unmarked maintenance was gated"); equal(2, ordinary.npc.updates, "Unmarked NPC update changed");
         ordinary.npc.metadata.set("pitsim-combat-bot", true); both(ordinary);
         equal(17, ordinary.human.noDamageTicks, "Newly marked NPC skipped its first native step");
@@ -204,7 +210,8 @@ public final class PitHurtClockCompatibility {
     public static void main(String[] args) throws Exception {
         unsafe = (Unsafe)field(Unsafe.class, "theUnsafe").get(null);
         CraftServer bukkit = allocate(CraftServer.class); field(Bukkit.class, "server").set(null, bukkit);
-        field(CraftServer.class, "pluginManager").set(bukkit, new SimplePluginManager(bukkit, new SimpleCommandMap(bukkit)));
+        plugins = new CountingPlugins(bukkit);
+        field(CraftServer.class, "pluginManager").set(bukkit, plugins.manager);
         console = allocate(TestServer.class); field(MinecraftServer.class, "primaryThread").set(console, Thread.currentThread());
         field(CraftServer.class, "console").set(bukkit, console); field(CraftServer.class, "logger").set(bukkit, Logger.getLogger("hurt-clock-fixture"));
         field(CraftServer.class, "scoreboardManager").set(bukkit,
@@ -215,7 +222,7 @@ public final class PitHurtClockCompatibility {
         int previous = MinecraftServer.currentTick;
         try { tenActualTicks(); strongerFreshAndCancelled(); callbacksAndReentry(); exceptionsAndLegacy(); clockEdges(); }
         finally { MinecraftServer.currentTick = previous; }
-        System.out.println("PIT_HURT_CLOCK_PASS: " + checks + " checks; actual World.g/Citizens NMS.tick dispatch and native player tick/damage admission, ten actual server ticks, stronger deltas, fresh/cancelled hits, callbacks/reentry/errors, legacy marker gating and clock edges; no live server scheduling claim");
+        System.out.println("PIT_HURT_CLOCK_PASS: " + checks + " checks; actual World.g/Citizens NMS.tick dispatch and native player tick/damage admission, ten actual server ticks, one Citizens update/trait pass and one broadcast unsubscribe per entity, stronger deltas, fresh/cancelled hits, callbacks/reentry/errors, legacy marker gating and clock edges; no live server scheduling claim");
     }
     private static final class Fixture {
         TestHuman human; TestNPC npc; TestWorld world; TestInteraction interaction; TestContainer container; TestPlayer bukkit;
@@ -272,4 +279,23 @@ public final class PitHurtClockCompatibility {
         @Override public boolean ae() { return false; }
     }
     private static final class Stop extends RuntimeException { }
+    /** Real SimplePluginManager behind a proxy that counts broadcast unsubscriptions. */
+    private static final class CountingPlugins implements InvocationHandler {
+        private final Map<Object, Integer> unsubscribes = new IdentityHashMap<>();
+        private final SimplePluginManager delegate;
+        final org.bukkit.plugin.PluginManager manager;
+        CountingPlugins(CraftServer server) {
+            delegate = new SimplePluginManager(server, new SimpleCommandMap(server));
+            manager = (org.bukkit.plugin.PluginManager)Proxy.newProxyInstance(org.bukkit.plugin.PluginManager.class.getClassLoader(),
+                    new Class[]{org.bukkit.plugin.PluginManager.class}, this);
+        }
+        @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getName().equals("unsubscribeFromPermission")) {
+                check("bukkit.broadcast.user".equals(args[0]), "Unexpected permission unsubscribe " + args[0]);
+                Integer count = unsubscribes.get(args[1]); unsubscribes.put(args[1], count == null ? 1 : count + 1);
+            }
+            try { return method.invoke(delegate, args); } catch (InvocationTargetException failure) { throw failure.getCause(); }
+        }
+        int count(Object permissible) { Integer count = unsubscribes.get(permissible); return count == null ? 0 : count; }
+    }
 }

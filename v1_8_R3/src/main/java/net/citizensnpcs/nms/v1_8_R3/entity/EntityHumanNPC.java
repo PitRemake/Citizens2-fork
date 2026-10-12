@@ -78,6 +78,15 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     private boolean pitPlayerTicked;
     private int pitPlayerTick;
     private int pitHurtTick;
+    // Main-thread snapshot of PitRemake metadata. Tracker workers read these
+    // instead of Citizens' unsynchronized metadata maps.
+    private volatile boolean pitCombatBot;
+    private volatile boolean pitManaged;
+    private volatile boolean pitSkinless;
+    private volatile boolean pitTabListed;
+    private volatile Integer pitSkinProfileTicks;
+    private Object pitUnsubscribedEntity;
+    private int pitMarkerTick = Integer.MIN_VALUE;
 
     public EntityHumanNPC(MinecraftServer minecraftServer, WorldServer world, GameProfile gameProfile,
             PlayerInteractManager playerInteractManager, NPC npc) {
@@ -88,6 +97,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             skinTracker = new SkinPacketTracker(this);
             playerInteractManager.setGameMode(WorldSettings.EnumGamemode.SURVIVAL);
             initialise(minecraftServer);
+            refreshPitMarkers();
         } else {
             skinTracker = null;
         }
@@ -480,6 +490,76 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         npc.getOrAddTrait(SkinTrait.class).setSkinPersistent(skinName, signature, data);
     }
 
+    /** Main thread: copy PitRemake markers for hot paths and tracker workers. */
+    public boolean refreshPitMarkers() {
+        if (npc == null)
+            return false;
+        boolean bot = npc.data().<Boolean>get("pitsim-combat-bot", false);
+        boolean managed = bot || "keeper".equals(npc.data().get("pitsim-lobby-role", ""));
+        boolean skinless = managed && npc.data().<Boolean>get("pitsim-skinless", false);
+        boolean tabListed = managed && npc.data().<Boolean>get("pitsim-tab-listed", false);
+        Integer profileTicks = npc.data().<Integer>get("pitsim-skin-profile-ticks");
+        // Avoid volatile stores when nothing changed (the common case).
+        if (pitCombatBot != bot) pitCombatBot = bot;
+        if (pitManaged != managed) pitManaged = managed;
+        if (pitSkinless != skinless) pitSkinless = skinless;
+        if (pitTabListed != tabListed) pitTabListed = tabListed;
+        Integer previousTicks = pitSkinProfileTicks;
+        if (previousTicks == null ? profileTicks != null : !previousTicks.equals(profileTicks))
+            pitSkinProfileTicks = profileTicks;
+        return bot;
+    }
+
+    /** Both same-tick callers reach t_(); read Citizens' metadata maps once per server tick. */
+    private boolean refreshPitMarkersThisTick() {
+        // The bot flag itself can change mid-tick (a newly marked NPC), so read it every call.
+        boolean bot = npc.data().<Boolean>get("pitsim-combat-bot", false);
+        int now = MinecraftServer.currentTick;
+        if (pitMarkerTick != now || bot != pitCombatBot) {
+            pitMarkerTick = now;
+            refreshPitMarkers();
+            if (pitCombatBot) quietInventorySync();
+        }
+        return pitCombatBot;
+    }
+
+    /**
+     * EntityPlayer.t_() runs the open container's client sync every tick, comparing and
+     * cloning slot items for a client this NPC does not have. Combat bots use a container
+     * whose sync step is a no-op; inventory contents and Bukkit views are unchanged.
+     */
+    private void quietInventorySync() {
+        if (defaultContainer instanceof PitQuietContainer || activeContainer != defaultContainer) return;
+        PitQuietContainer quiet = new PitQuietContainer(inventory, this);
+        defaultContainer = quiet;
+        activeContainer = quiet;
+    }
+
+    private static final class PitQuietContainer extends net.minecraft.server.v1_8_R3.ContainerPlayer {
+        PitQuietContainer(net.minecraft.server.v1_8_R3.PlayerInventory inventory, EntityPlayer owner) {
+            super(inventory, !owner.world.isClientSide, owner);
+        }
+
+        @Override
+        public void b() {
+        }
+    }
+
+    /** Cached {@code pitsim-combat-bot}; safe from tracker threads. */
+    public boolean isPitCombatBot() { return pitCombatBot; }
+
+    /** Cached combat bot or Keeper; these use ordered managed profile packets. */
+    public boolean isPitManaged() { return pitManaged; }
+
+    /** Cached managed {@code pitsim-skinless}. */
+    public boolean isPitSkinless() { return pitSkinless; }
+
+    /** Cached managed {@code pitsim-tab-listed}: never removed from tab while spawned. */
+    public boolean isPitTabListed() { return pitTabListed; }
+
+    /** Cached {@code pitsim-skin-profile-ticks}, or null when absent. */
+    public Integer getPitSkinProfileTicks() { return pitSkinProfileTicks; }
+
     public void setTracked(PlayerlistTrackerEntry trackerEntry) {
         this.trackerEntry = trackerEntry;
     }
@@ -493,7 +573,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
 
     @Override
     public void t_() {
-        if (npc == null || !npc.data().<Boolean>get("pitsim-combat-bot", false)) {
+        if (npc == null || !refreshPitMarkersThisTick()) {
             pitPlayerTicked = false;
             pitHurtTick++;
             super.t_();
@@ -501,11 +581,15 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             // Wind's entity pass and Citizens' compatibility ticker can both call
             // this method in one server tick. Native player maintenance, including
             // hurt immunity, must advance only once. Stamp before callbacks so a
-            // nested invocation cannot repeat it; keep Citizens' work below intact.
+            // nested invocation cannot repeat it.
             pitPlayerTicked = true;
             pitPlayerTick = MinecraftServer.currentTick;
             pitHurtTick++;
             super.t_();
+        } else {
+            // Duplicate (or nested) call in the same server tick: Citizens' packet,
+            // trait, goal and navigator work also runs once per server tick.
+            return;
         }
         if (npc == null)
             return;
@@ -513,7 +597,11 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             updateEffects = true;
         }
         this.noclip = isSpectator();
-        Bukkit.getServer().getPluginManager().unsubscribeFromPermission("bukkit.broadcast.user", bukkitEntity);
+        if (bukkitEntity != null && pitUnsubscribedEntity != bukkitEntity) {
+            // Once per spawned entity; a recreated NPC is a new entity instance.
+            Bukkit.getServer().getPluginManager().unsubscribeFromPermission("bukkit.broadcast.user", bukkitEntity);
+            pitUnsubscribedEntity = bukkitEntity;
+        }
 
         boolean navigating = npc.getNavigator().isNavigating();
         updatePackets(navigating);
@@ -531,7 +619,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
                 Setting.PACKET_UPDATE_DELAY.asInt()))
             return;
         updateCounter = 0;
-        if (npc.data().<Boolean>get("pitsim-combat-bot", false)) {
+        if (pitCombatBot) {
             // Native tracking sends the complete initial equipment. Subsequent changes
             // go only to existing trackers and only for dirty slots, including the helmet.
             for (int slot = 0; slot < pitEquipment.length; slot++) {

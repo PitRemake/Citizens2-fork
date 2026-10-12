@@ -27,7 +27,7 @@ public final class NpcBotOptimizationCompatibility {
         check(scans==100 && phases.size()==4,"Scans must stagger at 25% of baseline");
         EntityHumanNPC entity=allocate(EntityHumanNPC.class);CitizensNPC npc=allocate(CitizensNPC.class);
         SimpleMetadataStore data=new SimpleMetadataStore();data.set("pitsim-combat-bot",true);data.set(net.citizensnpcs.api.npc.NPC.Metadata.PACKET_UPDATE_DELAY,0);
-        field(AbstractNPC.class,"metadata").set(npc,data);field(EntityHumanNPC.class,"npc").set(entity,npc);
+        field(AbstractNPC.class,"metadata").set(npc,data);field(EntityHumanNPC.class,"npc").set(entity,npc);entity.refreshPitMarkers();
         field(EntityHumanNPC.class,"pitEquipment").set(entity,new ItemStack[5]);
         entity.inventory=new PlayerInventory(entity);WorldServer world=allocate(WorldServer.class);
         Tracker tracker=allocate(Tracker.class);tracker.sent=new ArrayList<>();world.tracker=tracker;entity.world=world;

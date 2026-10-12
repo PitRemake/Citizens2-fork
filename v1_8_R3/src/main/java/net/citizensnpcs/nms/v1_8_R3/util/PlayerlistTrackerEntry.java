@@ -48,9 +48,11 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
             return;
         final Entity tracker = trackedEntity;
         lastUpdatedPlayer.remove();
-        if (isPitTabHidden(tracker)) {
-            PitSkinProfiles.add(entityplayer, (EntityHumanNPC) tracker);
-            if (PitSkinProfiles.skinless(((EntityHumanNPC) tracker).getNPC())) skinlessProfileAdded.set(true);
+        if (isPitManaged(tracker)) {
+            // Tab-listed bots keep the same ordered ADD but never get a tracking REMOVE.
+            EntityHumanNPC human = (EntityHumanNPC) tracker;
+            PitSkinProfiles.add(entityplayer, human);
+            if (human.isPitSkinless() && !human.isPitTabListed()) skinlessProfileAdded.set(true);
             return;
         }
         NMS.sendTabListAdd(entityplayer.getBukkitEntity(), (Player) tracker.getBukkitEntity());
@@ -93,7 +95,7 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
         skinlessProfileAdded.remove();
         lastUpdatedPlayer.set(entityplayer);
         try {
-            if (isPitTabHidden(trackedEntity) && entityplayer.playerConnection != null) {
+            if (isPitManaged(trackedEntity) && entityplayer.playerConnection != null) {
                 // Wind's trackedPlayerMap is not a concurrent map. Keep
                 // admissions for this NPC serialized, while other NPCs can
                 // still be tracked by different workers.
@@ -125,25 +127,26 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
     }
 
     @Override public void track(List<EntityHuman> players) {
-        if (isPitTabHidden(trackedEntity)) synchronized (this) { super.track(players); }
+        if (isPitManaged(trackedEntity)) synchronized (this) { super.track(players); }
         else super.track(players);
     }
 
     /** Queue one absolute correction after old movement and rebase future deltas. */
     public synchronized void synchronizePosition() {
-        if (!isPitTabHidden(trackedEntity) || !NATIVE_SPAWN_HOOK) return;
+        if (!isPitManaged(trackedEntity) || !NATIVE_SPAWN_HOOK) return;
         try {
-            field("xLoc").setInt(this, MathHelper.floor(trackedEntity.locX * 32D));
-            field("yLoc").setInt(this, MathHelper.floor(trackedEntity.locY * 32D));
-            field("zLoc").setInt(this, MathHelper.floor(trackedEntity.locZ * 32D));
-            field("yRot").setInt(this, MathHelper.d(trackedEntity.yaw * 256F / 360F));
-            field("xRot").setInt(this, MathHelper.d(trackedEntity.pitch * 256F / 360F));
-            field("lastOnGround").setBoolean(this, trackedEntity.onGround);
-            field("ticksSinceLastForcedTeleport").setInt(this, 0);
+            if (SYNC_FIELDS == null) throw new NoSuchFieldException("Wind tracker baseline fields");
+            SYNC_FIELDS[0].setInt(this, MathHelper.floor(trackedEntity.locX * 32D));
+            SYNC_FIELDS[1].setInt(this, MathHelper.floor(trackedEntity.locY * 32D));
+            SYNC_FIELDS[2].setInt(this, MathHelper.floor(trackedEntity.locZ * 32D));
+            SYNC_FIELDS[3].setInt(this, MathHelper.d(trackedEntity.yaw * 256F / 360F));
+            SYNC_FIELDS[4].setInt(this, MathHelper.d(trackedEntity.pitch * 256F / 360F));
+            SYNC_FIELDS[5].setBoolean(this, trackedEntity.onGround);
+            SYNC_FIELDS[6].setInt(this, 0);
             Packet<?> packet = new PacketPlayOutEntityTeleport(trackedEntity);
             for (EntityPlayer viewer : trackedPlayers) PitSkinProfiles.sendOrdered(viewer, packet);
             // The absolute correction now supplies every existing viewer's baseline.
-            java.util.Map<EntityPlayer, Boolean> viewers = (java.util.Map<EntityPlayer, Boolean>) field("trackedPlayerMap").get(this);
+            java.util.Map<EntityPlayer, Boolean> viewers = (java.util.Map<EntityPlayer, Boolean>) SYNC_FIELDS[7].get(this);
             for (java.util.Map.Entry<EntityPlayer, Boolean> viewer : viewers.entrySet()) viewer.setValue(false);
         } catch (ReflectiveOperationException failure) {
             throw new IllegalStateException("Cannot synchronize Wind NPC teleport", failure);
@@ -156,10 +159,25 @@ public class PlayerlistTrackerEntry extends EntityTrackerEntry {
         return field;
     }
 
-    private static boolean isPitTabHidden(Entity tracker) {
-        if (!(tracker instanceof EntityHumanNPC))
-            return false;
-        return PitSkinProfiles.manages(((EntityHumanNPC) tracker).getNPC());
+    // Resolved once; absent on trackers without Wind's baseline fields.
+    private static final Field[] SYNC_FIELDS = syncFields();
+    private static Field[] syncFields() {
+        try {
+            return new Field[] { field("xLoc"), field("yLoc"), field("zLoc"), field("yRot"), field("xRot"),
+                    field("lastOnGround"), field("ticksSinceLastForcedTeleport"), field("trackedPlayerMap") };
+        } catch (NoSuchFieldException absent) {
+            return null;
+        }
+    }
+
+    /** Combat bot or Keeper, from the main-thread marker snapshot (tracker-thread safe). */
+    private static boolean isPitManaged(Entity tracker) {
+        return tracker instanceof EntityHumanNPC && ((EntityHumanNPC) tracker).isPitManaged();
+    }
+
+    /** Managed and kept out of the visible tab list; tab-listed bots are not hidden. */
+    static boolean isPitTabHidden(Entity tracker) {
+        return isPitManaged(tracker) && !((EntityHumanNPC) tracker).isPitTabListed();
     }
 
     private static int getB(EntityTrackerEntry entry) {

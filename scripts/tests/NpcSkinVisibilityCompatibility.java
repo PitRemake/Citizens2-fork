@@ -31,11 +31,12 @@ public final class NpcSkinVisibilityCompatibility {
         entity.attributes=new AttributeMapServer();
         entity.bukkit=allocate(FakePlayer.class);entity.bukkit.handle=entity;
         field(EntityPlayer.class,"playerInteractManager").set(entity,allocate(Interaction.class));
+        entity.refreshPitMarkers();
         return entity;
     }
     static EntityPlayer viewer()throws Exception {
         Viewer entity=allocate(Viewer.class);
-        Connection connection=allocate(Connection.class);connection.sent=new ArrayList<>();
+        Connection connection=allocate(Connection.class);connection.sent=new ArrayList<>();entity.destroyed=new ArrayList<>();
         field(PlayerConnection.class,"queuedPackets").set(connection,new LinkedBlockingQueue<Packet<?>>());
         entity.playerConnection=connection;
         entity.bukkit=allocate(FakePlayer.class);entity.bukkit.handle=entity;
@@ -121,7 +122,7 @@ public final class NpcSkinVisibilityCompatibility {
         // Keeper is managed for packet ordering but keeps its longer skin policy.
         FakeNpc keeper=npc(UUID.randomUUID());
         keeper.getNPC().data().set("pitsim-combat-bot",false);
-        keeper.getNPC().data().set("pitsim-lobby-role","keeper");
+        keeper.getNPC().data().set("pitsim-lobby-role","keeper");keeper.refreshPitMarkers();
         PitSkinProfiles.add(viewer,keeper);take(viewer);
         ticks(19);check(take(viewer).isEmpty(),"Keeper skin policy was shortened");
         ticks(1);check(take(viewer).size()==1,"Keeper profile failed to expire");
@@ -130,7 +131,7 @@ public final class NpcSkinVisibilityCompatibility {
         ticks(1);check(take(viewer).size()==1,"Despawn extended bot tab lifetime");
         check(pending().isEmpty(),"Short grace retained viewer/entity references");
         FakeNpc bare=npc(UUID.randomUUID());bare.getProfile().getProperties().clear();
-        bare.getNPC().data().set("pitsim-skinless",true);
+        bare.getNPC().data().set("pitsim-skinless",true);bare.refreshPitMarkers();
         Tracker bareTracker=tracker(bare);bare.setTracked(bareTracker);
         bareTracker.updatePlayer(viewer);skinlessOrder(take(viewer));
         check(pending().isEmpty(),"Skinless spawn retained a delayed profile");
@@ -153,10 +154,69 @@ public final class NpcSkinVisibilityCompatibility {
         check(!warped.trackedPlayerMap.get(viewer),"Teleport did not supply viewer's absolute baseline");
         check(!warped.isUpdating() && field(PlayerlistTrackerEntry.class,"skinlessProfileAdded").get(warped)!=null,"Tracking scope damaged by teleport");
         check(pending().isEmpty(),"Teleport correction created delayed profiles");
+        tabListed(viewer);
         System.out.println("TELEPORT_BASELINE_PASS: absolute body correction, quantized XYZ/rotation baseline, no ADD/SPAWN/REMOVE or delayed task");
         System.out.println("SKINLESS_PASS: ordered ADD/SPAWN/REMOVE in one queue; join/range/concurrent32; no delayed profiles or repeated packets");
         System.out.println("SKIN_VISIBILITY_PASS: real Wind join/range-entry/respawn; ADD before SPAWN; 2-tick bot grace; Keeper policy preserved; stale removals fenced; reconnect cleanup; 32 concurrent viewers");
         System.out.println("PROFILE_BATCH_PASS: 120 removals -> 8 packets; shared scheduler; zero retained expired profiles");
+    }
+    static boolean hasRemove(List<Packet<?>> packets)throws Exception {
+        for(Packet<?> packet:packets) if(packet instanceof PacketPlayOutPlayerInfo && action(packet)==PacketPlayOutPlayerInfo.EnumPlayerInfoAction.REMOVE_PLAYER) return true;
+        return false;
+    }
+    /** pitsim-tab-listed: ordered ADD then SPAWN, never a tracking REMOVE; REMOVE only on Citizens despawn. */
+    static void tabListed(EntityPlayer viewer)throws Exception {
+        take(viewer);
+        for(boolean skinless:new boolean[]{false,true}) {
+            FakeNpc listed=npc(UUID.randomUUID());
+            if(skinless){listed.getProfile().getProperties().clear();listed.getNPC().data().set("pitsim-skinless",true);}
+            listed.getNPC().data().set("pitsim-tab-listed",true);
+            check(!listed.isPitTabListed(),"Marker snapshot changed off the main-thread refresh");
+            listed.refreshPitMarkers();
+            check(listed.isPitTabListed()&&listed.isPitManaged(),"Tab-listed marker snapshot missing");
+            Tracker listedTracker=tracker(listed);listed.setTracked(listedTracker);
+            listedTracker.updatePlayer(viewer);List<Packet<?>> spawn=take(viewer);
+            spawnOrder(spawn);check(!hasRemove(spawn),"Tab-listed spawn sent REMOVE (skinless="+skinless+")");
+            check(pending().isEmpty(),"Tab-listed spawn scheduled a delayed removal");
+            ticks(105);check(take(viewer).isEmpty(),"Tab-listed bot received a late tracking REMOVE");
+            listedTracker.updatePlayer(viewer);check(take(viewer).isEmpty(),"Healthy tab-listed bot was replayed");
+            // Range exit: native destroy only.
+            Viewer v=(Viewer)viewer;v.destroyed.clear();listedTracker.outOfRange=true;listedTracker.updatePlayer(viewer);
+            check(v.destroyed.contains(listed),"Range exit did not destroy the tab-listed entity");
+            check(!hasRemove(take(viewer)),"Range exit sent REMOVE for a tab-listed bot");
+            ticks(105);check(take(viewer).isEmpty(),"Range exit scheduled a late REMOVE");
+            // Range re-entry: ADD then SPAWN again, still no REMOVE.
+            listedTracker.outOfRange=false;listedTracker.updatePlayer(viewer);
+            List<Packet<?>> again=take(viewer);spawnOrder(again);check(!hasRemove(again),"Range re-entry sent REMOVE");
+            // Older non-listed entity with the same profile cannot erase the listed row.
+            FakeNpc old=npc(listed.getProfile().getId());PitSkinProfiles.add(viewer,old);take(viewer);
+            PitSkinProfiles.add(viewer,listed);take(viewer);
+            check(pending().isEmpty(),"Tab-listed ADD did not supersede an older pending removal");
+            ticks(10);check(take(viewer).isEmpty(),"Older entity removal erased tab-listed row");
+            // Tracker replacement: a new entry performs the same ordered ADD/SPAWN.
+            Tracker replaced=tracker(listed);listed.setTracked(replaced);replaced.updatePlayer(viewer);
+            List<Packet<?>> replacedPackets=take(viewer);spawnOrder(replacedPackets);check(!hasRemove(replacedPackets),"Tracker replacement sent REMOVE");
+            // Citizens despawn: one REMOVE to every real online viewer, none to NPCs.
+            EntityPlayer other=viewer();
+            Connection npcConnection=allocate(Connection.class);npcConnection.sent=new ArrayList<>();
+            field(PlayerConnection.class,"queuedPackets").set(npcConnection,new LinkedBlockingQueue<Packet<?>>());
+            listed.playerConnection=npcConnection;
+            field(org.bukkit.craftbukkit.v1_8_R3.CraftServer.class,"playerView").set(org.bukkit.Bukkit.getServer(),
+                    Arrays.asList(viewer.getBukkitEntity(),listed.getBukkitEntity(),other.getBukkitEntity()));
+            // SkinPacketTracker.onRemoveNPC dispatches here when PitSkinProfiles.tabListed(npc).
+            check(PitSkinProfiles.tabListed(listed.getNPC()),"Despawn dispatch predicate missed tab-listed bot");
+            PitSkinProfiles.despawnTabListed(listed);
+            for(EntityPlayer target:new EntityPlayer[]{viewer,other}) {
+                List<Packet<?>> removed=take(target);
+                check(removed.size()==1&&action(removed.get(0))==PacketPlayOutPlayerInfo.EnumPlayerInfoAction.REMOVE_PLAYER,"Despawn must send exactly one REMOVE per viewer");
+            }
+            check(take(listed).isEmpty(),"Despawn REMOVE sent to an NPC connection");
+            check(pending().isEmpty(),"Despawn retained profiles");
+            listed.playerConnection=null;
+            field(org.bukkit.craftbukkit.v1_8_R3.CraftServer.class,"playerView").set(org.bukkit.Bukkit.getServer(),Collections.emptyList());
+        }
+        FakeNpc plain=npc(UUID.randomUUID());check(!PitSkinProfiles.tabListed(plain.getNPC())&&!plain.isPitTabListed(),"Unlisted bot treated as tab-listed");
+        System.out.println("TAB_LISTED_PASS: skinned+skinless tab-listed bots: ordered ADD/SPAWN on track/re-entry/replacement, no tracking REMOVE (range exit destroy only, no late REMOVE, stale removal superseded), one REMOVE per real viewer on Citizens despawn");
     }
     static void skinlessOrder(List<Packet<?>> packets)throws Exception {
         check(packets.size()>=3,"Skinless native spawn incomplete");
@@ -166,7 +226,8 @@ public final class NpcSkinVisibilityCompatibility {
     }
     public static final class Tracker extends PlayerlistTrackerEntry {
         private Tracker(){super(null,64,2,true);}
-        @Override public boolean c(EntityPlayer viewer){return true;}
+        volatile boolean outOfRange;
+        @Override public boolean c(EntityPlayer viewer){return !outOfRange;}
         @Override protected boolean e(EntityPlayer viewer){return true;}
     }
     public static final class FakeNpc extends EntityHumanNPC {
@@ -180,9 +241,10 @@ public final class NpcSkinVisibilityCompatibility {
         @Override public IChatBaseComponent getPlayerListName(){return null;}
     }
     public static final class Viewer extends EntityPlayer {
-        FakePlayer bukkit;
+        FakePlayer bukkit;List<Entity> destroyed;
         private Viewer(){super(null,null,null,null);}
         @Override public CraftPlayer getBukkitEntity(){return bukkit;}
+        @Override public synchronized void d(Entity entity){if(destroyed==null)destroyed=new ArrayList<>();destroyed.add(entity);}
     }
     public static final class FakePlayer extends CraftPlayer {
         EntityPlayer handle;
