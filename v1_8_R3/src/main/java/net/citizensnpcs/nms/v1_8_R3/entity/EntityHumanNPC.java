@@ -313,7 +313,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         }
         pitControlActive = true;
         applyPitRotation();
-        setSprinting(pitControl.sprint());
+        setSprinting(pitControl.sprint() && !isSneaking() && !bS());
         return true;
     }
 
@@ -352,7 +352,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             return false;
         }
         applyPitRotation();
-        setSprinting(pitControl.sprint());
+        setSprinting(pitControl.sprint() && !isSneaking() && !bS());
         AttributeInstance speed = getAttributeInstance(GenericAttributes.MOVEMENT_SPEED);
         // This NPC travel path bypasses EntityHuman.m(), which normally refreshes
         // sprint air acceleration every tick. Keep ground and air sprint in sync.
@@ -362,6 +362,18 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         k((float)speed.getValue());
         aZ = pitControl.strafe();
         ba = pitControl.forward();
+        // Client-side key scaling is absent for an NPC. Bound ordinary ground
+        // sprint to 5.6 blocks/s on a .6-friction floor, including diagonals.
+        // Scale input, never velocity: knockback, ice and potion modifiers survive.
+        if (onGround && isSprinting()) {
+            double magnitude = Math.hypot(aZ, ba);
+            double maximum = .28D * (1D - .546D) / (.13D * .98D);
+            if (magnitude > maximum) { aZ *= maximum / magnitude; ba *= maximum / magnitude; }
+        }
+        // Vanilla's local player applies these before native travel.
+        float inputScale = (isSneaking() ? .3F : 1F) * (bS() ? .2F : 1F);
+        aZ *= inputScale;
+        ba *= inputScale;
         i(pitControl.jump());
         try {
             moveOnCurrentHeading(true);
@@ -621,6 +633,9 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
     }
 
     private void updatePackets(boolean navigating) {
+        // A complete bow draw can finish before the ordinary 30-tick equipment
+        // refresh. Send hand changes before the tracker's use-item metadata.
+        if (pitCombatBot) updatePitEquipment(0);
         if (updateCounter++ <= npc.data().<Integer> get(NPC.Metadata.PACKET_UPDATE_DELAY,
                 Setting.PACKET_UPDATE_DELAY.asInt()))
             return;
@@ -628,12 +643,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         if (pitCombatBot) {
             // Native tracking sends the complete initial equipment. Subsequent changes
             // go only to existing trackers and only for dirty slots, including the helmet.
-            for (int slot = 0; slot < pitEquipment.length; slot++) {
-                ItemStack equipment = getEquipment(slot);
-                if (ItemStack.equals(pitEquipment[slot], equipment)) continue;
-                pitEquipment[slot] = equipment == null ? null : equipment.cloneItemStack();
-                ((WorldServer)world).getTracker().a(this, new PacketPlayOutEntityEquipment(getId(), slot, equipment));
-            }
+            for (int slot = 1; slot < pitEquipment.length; slot++) updatePitEquipment(slot);
             return;
         }
         boolean itemChanged = false;
@@ -654,6 +664,14 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             packets[i] = new PacketPlayOutEntityEquipment(getId(), i, getEquipment(i));
         }
         NMSImpl.sendPacketsNearby(getBukkitEntity(), current, packets);
+    }
+
+    private void updatePitEquipment(int slot) {
+        ItemStack equipment = getEquipment(slot);
+        // NMS equals compares only NBT; a plain sword and bow would look equal.
+        if (ItemStack.matches(pitEquipment[slot], equipment)) return;
+        pitEquipment[slot] = equipment == null ? null : equipment.cloneItemStack();
+        ((WorldServer)world).getTracker().a(this, new PacketPlayOutEntityEquipment(getId(), slot, equipment));
     }
 
     public void updatePathfindingRange(float pathfindingRange) {

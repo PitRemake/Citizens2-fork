@@ -78,7 +78,8 @@ public final class PitControlCompatibility {
         check(human.setPitControl(450F,-200F,0F,1F,true,true),"Marked native input rejected");
         equal(90F,human.yaw,"Immediate yaw");equal(-90F,human.pitch,"Immediate pitch");
         check(step(human),"Native frame not consumed");check(human.travels==1&&human.jumps==1,"Native travel/jump dispatch count");
-        equal(.98F,human.lastForward,"Native input damping");equal(0F,human.lastStrafe,"Unexpected strafe");
+        double sprintInput=.28D*(1D-.546D)/.13D;
+        equal(sprintInput,human.lastForward,"Ground sprint input damping");equal(0F,human.lastStrafe,"Unexpected strafe");
         equal(.1D,speed.b(),"Navigation base leaked into input movement");equal(.1D*1.4D*1.3D,human.speedAtTravel,"Native sprint/potion modifiers lost");
         check(speed.a(boostId)!=null,"Existing speed modifier removed");check(human.isSprinting(),"Sprint metadata disappeared before native tracking");
         equal(90F,human.aI,"Body yaw");equal(90F,human.aJ,"Previous body yaw");equal(90F,human.aK,"Head yaw");
@@ -94,7 +95,7 @@ public final class PitControlCompatibility {
         check(step(duplicateAge)&&duplicateAge.travels==2,"Duplicate entity ticks invalidated one-server-tick input");
         TestHuman diagonal=human(true);
         check(diagonal.setPitControl(0F,0F,1F,1F,true,false)&&step(diagonal),"Diagonal native input rejected");
-        equal(.98D,diagonal.lastStrafe,"Diagonal strafe damping");equal(.98D,diagonal.lastForward,"Diagonal forward damping");
+        equal(sprintInput/Math.sqrt(2D),diagonal.lastStrafe,"Diagonal strafe damping");equal(sprintInput/Math.sqrt(2D),diagonal.lastForward,"Diagonal forward damping");
         check(diagonal.isSprinting()&&diagonal.travels==1,"Diagonal frame did not sprint through one native travel");
         check(diagonal.setPitControl(0F,0F,1F,0F,true,false)&&step(diagonal)&&!diagonal.isSprinting(),"Pure native strafe sprinted");
         check(diagonal.setPitControl(0F,0F,0F,-1F,true,false)&&step(diagonal)&&!diagonal.isSprinting(),"Native backward input sprinted");

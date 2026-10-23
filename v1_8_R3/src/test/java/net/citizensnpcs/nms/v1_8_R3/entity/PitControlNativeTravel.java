@@ -60,6 +60,7 @@ public final class PitControlNativeTravel {
     }
     private static void run()throws Exception {
         sprintParity();
+        postureSpeed();
         MinecraftServer.currentTick=1000;TravelHuman ground=human();
         for(int tick=0;tick<30;tick++) {
             check(ground.setPitControl(0F,0F,0F,1F,true,false),"Ground frame rejected");check(step(ground),"Ground frame missed");ground.ticksLived++;MinecraftServer.currentTick++;
@@ -106,9 +107,28 @@ public final class PitControlNativeTravel {
             human.clearPitControl();check(Math.abs(human.aM-.02D)<1E-6,"Release retained sprint air control");
         }
         check(Math.abs(speeds[0]-.21586D)<.001D,"Native walk speed changed");
-        check(Math.abs(speeds[1]/speeds[0]-1.3D)<.001D,"Native sprint modifier missing or doubled");
-        check(Math.abs(speeds[2]/speeds[1]-1D/.98D)<.001D,"Diagonal keys normalized before native damping");
+        check(Math.abs(speeds[1]*20D-5.6D)<.002D,"Ground sprint is not 5.6 blocks/s");
+        check(Math.abs(speeds[2]*20D-5.6D)<.002D,"Diagonal ground sprint exceeded 5.6 blocks/s");
         System.out.printf(Locale.ROOT,"PLAYER_PARITY: walk=%.5f sprint=%.5f diagonalSprint=%.5f blocks/tick%n",speeds[0],speeds[1],speeds[2]);
+    }
+    private static void postureSpeed()throws Exception {
+        for(int mode=0;mode<3;mode++) {
+            TravelHuman human=human();human.setSneaking(mode!=0);
+            if(mode!=1) { human.inventory.items[0]=new ItemStack(Items.BOW);human.a(human.inventory.items[0],72000); }
+            double previous=human.locZ;
+            for(int tick=0;tick<40;tick++) {
+                MinecraftServer.currentTick++;
+                check(human.setPitControl(0F,0F,0F,1F,true,false),"Posture frame rejected");
+                previous=human.locZ;check(step(human),"Posture travel missed");
+                check(!human.isSprinting(),"Drawing/sneaking retained sprint");
+            }
+            double scale=mode==0?.2D:mode==1?.3D:.06D;
+            check(Math.abs((human.locZ-previous)-.21586D*scale)<.001D,"Missing native posture slowdown");
+            // Removing the pose must restore full sprint, without a stuck input scale.
+            human.setSneaking(false);human.bV();
+            for(int tick=0;tick<40;tick++) { MinecraftServer.currentTick++;human.setPitControl(0F,0F,0F,1F,true,false);previous=human.locZ;step(human); }
+            check(Math.abs((human.locZ-previous)*20D-5.6D)<.002D,"Sprint failed to recover after posture");
+        }
     }
     private static void clockRules()throws Exception {
         TravelHuman same=human();MinecraftServer.currentTick=3000;same.setPitControl(0F,0F,0F,1F,false,false);same.ticksLived+=10;

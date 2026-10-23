@@ -51,6 +51,8 @@ public final class PitHurtClockCompatibility {
         field(EntityHumanNPC.class, "npc").set(fixture.human, fixture.npc);
         fixture.human.applied = new ArrayList<>(); fixture.human.accept = true;
         fixture.human.abilities = new PlayerAbilities();
+        fixture.human.inventory = new PlayerInventory(fixture.human);
+        field(EntityHumanNPC.class, "pitEquipment").set(fixture.human, new ItemStack[5]);
         fixture.human.maxNoDamageTicks = 20;
         field(Entity.class, "defaultActivationState").setBoolean(fixture.human, true); fixture.human.ad = true;
         fixture.human.locY = 32D; fixture.human.af = 2;

@@ -15,7 +15,7 @@ for the duration of `updatePlayer()` and clears it in `finally`.
 `scripts/build-pitremake.py` compiles the changed upstream source against the
 SHA-256-pinned official build 2803 JAR and the 1.8.8 server API. It replaces
 the 1.8.8 tracker and human NPC controller classes and marks the plugin version
-`2.0.30-PitRemake.17`. The full historical
+`2.0.30-PitRemake.18`. The full historical
 Maven reactor is retained for source review; the narrow build avoids reliance
 on abandoned dependency repositories and gives CI a reproducible base check.
 
@@ -23,6 +23,16 @@ The fork also leaves PitRemake combat bots out of Citizens' fake scoreboard
 teams. PitRemake already assigns their visible name and tab team; the two
 owners formerly competed for the same entry and forced a packet every display
 refresh. Other Citizens NPCs retain their ordinary team behavior.
+
+Revision 18 sends dirty combat-bot hand equipment each tick, before native
+use-item metadata, so a bow draw cannot disappear inside the 30-tick armor
+refresh interval. Equipment equality includes item type/count/damage and NBT
+(NMS `equals` checked only NBT). Unchanged hands send no packets. Native control applies the
+client's bow-use and sneak input slowdown and suppresses sprint in those poses.
+Ordinary grounded sprint input is bounded to 5.6 blocks/second, including
+diagonals; velocity, knockback and potion modifiers are preserved. Native Wind
+tests measure both sprint headings, bow/sneak slowdown and recovery, and check
+bow/sword packet transitions with the normal delayed equipment refresh.
 
 Revision 17 restores player sprint input parity for controlled combat bots.
 Control frames retain full W+A/W+D axes; native travel owns normalization

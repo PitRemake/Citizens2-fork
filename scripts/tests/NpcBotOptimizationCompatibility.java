@@ -44,6 +44,24 @@ public final class NpcBotOptimizationCompatibility {
         check(tracker.sent.size()==1,"In-place NBT changes must not alias the snapshot");
         tracker.sent.clear();entity.inventory.armor[3]=null;update(entity,update);
         check(tracker.sent.size()==1 && field(PacketPlayOutEntityEquipment.class,"b").getInt(tracker.sent.get(0))==4,"Removing helmet must clear it for observers");
+        data.set(net.citizensnpcs.api.npc.NPC.Metadata.PACKET_UPDATE_DELAY,30);
+        field(EntityHumanNPC.class,"updateCounter").set(entity,0);
+        DataWatcher watcher=new DataWatcher(entity);watcher.a(0,(byte)0);field(Entity.class,"datawatcher").set(entity,watcher);
+        tracker.sent.clear();entity.inventory.items[0]=new ItemStack(Items.BOW);
+        entity.a(entity.inventory.items[0],72000);
+        update.invoke(entity,false);
+        check(tracker.sent.size()==1,"Bow must reach observers before delayed armor refresh");
+        check(((ItemStack)field(PacketPlayOutEntityEquipment.class,"c").get(tracker.sent.get(0))).getItem()==Items.BOW,"Wrong hand packet");
+        for(int tick=1;tick<20;tick++) {
+            update.invoke(entity,false);
+            check(entity.bS() && (watcher.getByte(0)&16)!=0,"Draw pose lost before release");
+        }
+        check(tracker.sent.size()==1,"Stable draw must not resend hand packets");
+        entity.bV();entity.inventory.items[0]=new ItemStack(Items.DIAMOND_SWORD);update.invoke(entity,false);
+        check(tracker.sent.size()==2,"Sword must return immediately; packets="+tracker.sent.size());
+        check((watcher.getByte(0)&16)==0,"Sword use flag must clear; flags="+watcher.getByte(0));
+        entity.inventory.items[0]=new ItemStack(Items.BOW);update.invoke(entity,false);
+        check(tracker.sent.size()==3,"Plain sword-to-bow must compare item type, not just NBT");
         System.out.println("BOT_OPTIMIZATION_PASS: item scans 100/400; changed hand/helmet/NBT/removal packets only; unchanged equipment 0 packets");
     }
     public static final class Tracker extends EntityTracker {
