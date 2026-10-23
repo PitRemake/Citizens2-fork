@@ -338,6 +338,7 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         i(false);
         jumpTicks = 0;
         setSprinting(false);
+        aM = bF;
     }
 
     private boolean consumePitControl() {
@@ -353,6 +354,9 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
         applyPitRotation();
         setSprinting(pitControl.sprint());
         AttributeInstance speed = getAttributeInstance(GenericAttributes.MOVEMENT_SPEED);
+        // This NPC travel path bypasses EntityHuman.m(), which normally refreshes
+        // sprint air acceleration every tick. Keep ground and air sprint in sync.
+        aM = (float) (bF * (isSprinting() ? 1.3D : 1D));
         // Navigation's speed multiplier must not become a persistent player-input speed boost.
         speed.setValue(.1D);
         k((float)speed.getValue());
@@ -404,7 +408,9 @@ public class EntityHumanNPC extends EntityPlayer implements NPCHolder, Skinnable
             }
             moveOnCurrentHeading();
         }
-        NMSImpl.updateAI(this);
+        // Accepted Pit input owns the keys for this tick. Citizens controllers
+        // must not overwrite forward/jump after that native movement step.
+        if (!controlled) NMSImpl.updateAI(this);
 
         if (npc.data().get(NPC.Metadata.COLLIDABLE, !npc.isProtected())) {
             bL();

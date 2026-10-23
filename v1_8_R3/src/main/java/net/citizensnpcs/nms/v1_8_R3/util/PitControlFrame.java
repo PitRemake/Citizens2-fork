@@ -16,11 +16,8 @@ public final class PitControlFrame {
         this.pitch = Math.max(-90F, Math.min(90F, pitch));
         this.strafe = Math.max(-1F, Math.min(1F, strafe));
         this.forward = Math.max(-1F, Math.min(1F, forward));
-        double length = Math.sqrt(this.strafe * this.strafe + this.forward * this.forward);
-        if (length > 1D) {
-            this.strafe /= length;
-            this.forward /= length;
-        }
+        // These are player keys, not a velocity vector. Native travel normalizes
+        // W+A/W+D after its .98 input damping, exactly as the 1.8 client does.
         // Forward-diagonal (W+A/W+D) travel can sprint; orbit/backpedal stay walking.
         this.sprint = sprint && this.forward > 0F && Math.abs(this.strafe) <= this.forward + 1.0E-6F;
         this.jump = jump;

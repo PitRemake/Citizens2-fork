@@ -50,7 +50,7 @@ public final class PitControlCompatibility {
         PitControlFrame frame=new PitControlFrame();
         check(frame.submit(4,900F,200F,2F,3F,true,true),"Finite frame rejected");
         equal(-180F,frame.yaw(),"Wrapped yaw");equal(90F,frame.pitch(),"Clamped pitch");
-        equal(1D,Math.sqrt(frame.strafe()*frame.strafe()+frame.forward()*frame.forward()),"Normalized input");
+        equal(1D,frame.strafe(),"Clamped strafe key");equal(1D,frame.forward(),"Clamped forward key");
         check(frame.sprint(),"Normalized forward-diagonal input lost sprint");
         check(frame.consume(4),"Same-tick input missed");check(!frame.consume(4),"Frame replayed");
         frame.submit(4,0F,0F,-1F,1F,true,false);check(frame.sprint(),"Left forward-diagonal input lost sprint");
@@ -94,7 +94,7 @@ public final class PitControlCompatibility {
         check(step(duplicateAge)&&duplicateAge.travels==2,"Duplicate entity ticks invalidated one-server-tick input");
         TestHuman diagonal=human(true);
         check(diagonal.setPitControl(0F,0F,1F,1F,true,false)&&step(diagonal),"Diagonal native input rejected");
-        equal(.98D/Math.sqrt(2D),diagonal.lastStrafe,"Diagonal strafe damping");equal(.98D/Math.sqrt(2D),diagonal.lastForward,"Diagonal forward damping");
+        equal(.98D,diagonal.lastStrafe,"Diagonal strafe damping");equal(.98D,diagonal.lastForward,"Diagonal forward damping");
         check(diagonal.isSprinting()&&diagonal.travels==1,"Diagonal frame did not sprint through one native travel");
         check(diagonal.setPitControl(0F,0F,1F,0F,true,false)&&step(diagonal)&&!diagonal.isSprinting(),"Pure native strafe sprinted");
         check(diagonal.setPitControl(0F,0F,0F,-1F,true,false)&&step(diagonal)&&!diagonal.isSprinting(),"Native backward input sprinted");

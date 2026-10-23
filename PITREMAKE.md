@@ -15,7 +15,7 @@ for the duration of `updatePlayer()` and clears it in `finally`.
 `scripts/build-pitremake.py` compiles the changed upstream source against the
 SHA-256-pinned official build 2803 JAR and the 1.8.8 server API. It replaces
 the 1.8.8 tracker and human NPC controller classes and marks the plugin version
-`2.0.30-PitRemake.9`. The full historical
+`2.0.30-PitRemake.17`. The full historical
 Maven reactor is retained for source review; the narrow build avoids reliance
 on abandoned dependency repositories and gives CI a reproducible base check.
 
@@ -23,6 +23,18 @@ The fork also leaves PitRemake combat bots out of Citizens' fake scoreboard
 teams. PitRemake already assigns their visible name and tab team; the two
 owners formerly competed for the same entry and forced a packet every display
 refresh. Other Citizens NPCs retain their ordinary team behavior.
+
+Revision 17 restores player sprint input parity for controlled combat bots.
+Control frames retain full W+A/W+D axes; native travel owns normalization
+after the usual .98 input damping. The custom human travel path now refreshes
+air acceleration (.02 walking, .026 sprinting), which vanilla EntityHuman.m()
+normally supplies. Citizens movement/jump controllers run only when Pit has
+not accepted a control frame, so they cannot overwrite that frame's keys.
+Releasing Pit control restores walking air control and the ordinary AI path.
+Native Wind tests cover steady walking/sprinting/diagonal speed, sprint air
+control, cancellation, knockback, jumps, slabs and both scheduler orderings.
+Deploy with the gameplay held-forward melee changes for capture-style combat;
+this revision fixes physics but does not choose combat tactics.
 
 The first revision fixed the shared-viewer race. PitRemake's version gate
 already skips its periodic visibility sweep with this fork. Continue validating

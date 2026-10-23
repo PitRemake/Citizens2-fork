@@ -39,6 +39,7 @@ public final class PitControlNativeTravel {
         field(EntityLiving.class,"c").set(human,attributes);field(EntityLiving.class,"effects").set(human,new HashMap<Integer,MobEffect>());
         field(Entity.class,"random").set(human,new Random(1L));
         human.abilities=new PlayerAbilities();human.inventory=new PlayerInventory(human);human.aM=.02F;
+        field(EntityHuman.class,"bF").setFloat(human,.02F); // Unsafe skips the player field initializer.
         FloorWorld world=allocate(FloorWorld.class);world.floorTop=floorTop;world.floor=new AxisAlignedBB(-256D,0D,-256D,256D,floorTop,256D);
         field(World.class,"methodProfiler").set(world,new MethodProfiler());
         field(World.class,"movementCache").set(world,field(World.class,"movementCache").getType().getConstructor().newInstance());
@@ -58,6 +59,7 @@ public final class PitControlNativeTravel {
         try{run();}finally{MinecraftServer.currentTick=priorTick;}
     }
     private static void run()throws Exception {
+        sprintParity();
         MinecraftServer.currentTick=1000;TravelHuman ground=human();
         for(int tick=0;tick<30;tick++) {
             check(ground.setPitControl(0F,0F,0F,1F,true,false),"Ground frame rejected");check(step(ground),"Ground frame missed");ground.ticksLived++;MinecraftServer.currentTick++;
@@ -89,6 +91,24 @@ public final class PitControlNativeTravel {
         }
         clockRules();
         System.out.println("NATIVE_TRAVEL_PASS: actual native g, bF and Entity.move through floor collision, gravity and friction; two explicit scheduler orderings and bounded server-clock frames; no full server/world scheduling claim");
+    }
+    private static void sprintParity()throws Exception {
+        double[] speeds=new double[3];
+        for(int mode=0;mode<3;mode++) {
+            TravelHuman human=human();double previous=human.locZ,previousX=human.locX;
+            for(int tick=0;tick<40;tick++) {
+                MinecraftServer.currentTick++;
+                check(human.setPitControl(0F,0F,mode==2?1F:0F,1F,mode!=0,false),"Parity frame rejected");
+                previous=human.locZ;previousX=human.locX;check(step(human),"Parity frame missed");
+            }
+            speeds[mode]=Math.hypot(human.locZ-previous,human.locX-previousX);
+            check(Math.abs(human.aM-(mode==0?.02D:.026D))<1E-6,"Sprint air control disagrees with native player");
+            human.clearPitControl();check(Math.abs(human.aM-.02D)<1E-6,"Release retained sprint air control");
+        }
+        check(Math.abs(speeds[0]-.21586D)<.001D,"Native walk speed changed");
+        check(Math.abs(speeds[1]/speeds[0]-1.3D)<.001D,"Native sprint modifier missing or doubled");
+        check(Math.abs(speeds[2]/speeds[1]-1D/.98D)<.001D,"Diagonal keys normalized before native damping");
+        System.out.printf(Locale.ROOT,"PLAYER_PARITY: walk=%.5f sprint=%.5f diagonalSprint=%.5f blocks/tick%n",speeds[0],speeds[1],speeds[2]);
     }
     private static void clockRules()throws Exception {
         TravelHuman same=human();MinecraftServer.currentTick=3000;same.setPitControl(0F,0F,0F,1F,false,false);same.ticksLived+=10;
