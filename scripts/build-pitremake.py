@@ -13,6 +13,7 @@ import re
 import subprocess
 import struct
 import tempfile
+import urllib.request
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -29,10 +30,17 @@ SOURCES = {
     "net/citizensnpcs/npc/skin/Skin.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/skin/Skin.java",
     "net/citizensnpcs/npc/profile/ProfileFetchThread.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/profile/ProfileFetchThread.java",
     "net/citizensnpcs/npc/profile/ProfileRequest.class": ROOT / "main/src/main/java/net/citizensnpcs/npc/profile/ProfileRequest.java",
+    "net/citizensnpcs/api/trait/trait/Equipment.class": ROOT / "compat-api/src/main/java/net/citizensnpcs/api/trait/trait/Equipment.java",
 }
 BASE_SHA256 = "54e5ef9db95a6a6f68a2bbbb1a3eeb2770087afd8ad880218855292a4618fda7"
 UPSTREAM_VERSION = "2.0.30-SNAPSHOT (build 2803)"
-FORK_VERSION = "2.0.30-PitRemake.18"
+FORK_VERSION = "2.0.30-PitRemake.19"
+EQUIPMENT_CLASS = "net/citizensnpcs/api/trait/trait/Equipment.class"
+EQUIPMENT_BASE_SHA256 = "87df8502faec6b0eca8afb27519396c26688bed6e862cb4e1dce83359e69f39b"
+EQUIPMENT_API_NAME = "spigot-api-1.13.2-R0.1-20190423.030901-214.jar"
+EQUIPMENT_API_SHA256 = "9103f5e2c8789c7ac37c3b50b4cdfe2fca176f6400928c5228af5749138e23b2"
+EQUIPMENT_API_URL = ("https://hub.spigotmc.org/nexus/content/repositories/snapshots/"
+                     "org/spigotmc/spigot-api/1.13.2-R0.1-SNAPSHOT/" + EQUIPMENT_API_NAME)
 QUEUE_HANDLER = "net/citizensnpcs/nms/v1_8_R3/network/EmptyNetHandler.class"
 QUEUE_DESCRIPTOR = "(Lnet/minecraft/server/v1_8_R3/Packet;)V"
 
@@ -122,16 +130,51 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build(base, server, javac, output):
+def equipment_compile_api(path=None):
+    """Compile-only API for upstream's dormant offhand/1.13 branches; never shipped."""
+    explicit = path is not None
+    path = pathlib.Path(path) if explicit else ROOT / "build/dependencies" / EQUIPMENT_API_NAME
+    if not path.is_file():
+        if explicit:
+            raise ValueError("Missing explicitly supplied Equipment compile API")
+        with urllib.request.urlopen(EQUIPMENT_API_URL, timeout=30) as response:
+            data = response.read()
+        if hashlib.sha256(data).hexdigest() != EQUIPMENT_API_SHA256:
+            raise ValueError("Downloaded Equipment compile API hash does not match")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as staged:
+            staged.write(data)
+            temporary = pathlib.Path(staged.name)
+        try:
+            os.replace(temporary, path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    if digest(path) != EQUIPMENT_API_SHA256:
+        raise ValueError("Equipment compile API hash does not match")
+    return path
+
+
+def build(base, server, javac, output, equipment_api=None):
     if digest(base) != BASE_SHA256:
         raise ValueError("Citizens base JAR does not match the pinned build 2803 hash")
     if not server.is_file():
         raise ValueError("Missing 1.8.8 server API JAR")
+    with zipfile.ZipFile(base) as original:
+        if hashlib.sha256(original.read(EQUIPMENT_CLASS)).hexdigest() != EQUIPMENT_BASE_SHA256:
+            raise ValueError("Pinned Equipment trait class changed")
+    equipment_api = equipment_compile_api(equipment_api)
     with tempfile.TemporaryDirectory(prefix="citizens-pitremake-") as temporary:
         classes = pathlib.Path(temporary)
         subprocess.run([str(javac), "-source", "8", "-target", "8", "-cp",
                         str(base) + os.pathsep + str(server), "-d", str(classes),
-                        *[str(source) for source in SOURCES.values()]], check=True)
+                        *[str(source) for name, source in SOURCES.items() if name != EQUIPMENT_CLASS]], check=True)
+        # This one unchanged cross-version API class contains dormant post-1.8
+        # methods. Compile it separately; the actual server and all runtime tests
+        # remain 1.8.8, and no classes from this API are packaged.
+        subprocess.run([str(javac), "-source", "8", "-target", "8", "-cp",
+                        os.pathsep.join(map(str, (equipment_api, base, server))), "-d", str(classes),
+                        str(SOURCES[EQUIPMENT_CLASS])], check=True)
         # Anonymous delayed-packet tasks are compiled as companion classes.
         # Ship them with their outer classes so their synthetic accessors match.
         replacements = {item.relative_to(classes).as_posix(): item.read_bytes()
@@ -186,6 +229,8 @@ if __name__ == "__main__":
     parser.add_argument("--server", type=pathlib.Path)
     parser.add_argument("--javac", type=pathlib.Path)
     parser.add_argument("--output", type=pathlib.Path, default=ROOT / "build/libs/Citizens-PitRemake-2.0.30.jar")
+    parser.add_argument("--equipment-api", type=pathlib.Path,
+                        help="Pinned compile-only API; default uses/downloads checksum-verified build/dependencies cache")
     args = parser.parse_args()
     if args.verify_artifact:
         verify_artifact(args.verify_artifact.resolve())
@@ -193,4 +238,5 @@ if __name__ == "__main__":
     else:
         if not all((args.base, args.server, args.javac)):
             parser.error("building requires --base, --server and --javac")
-        build(args.base.resolve(), args.server.resolve(), args.javac.resolve(), args.output.resolve())
+        build(args.base.resolve(), args.server.resolve(), args.javac.resolve(), args.output.resolve(),
+              args.equipment_api.resolve() if args.equipment_api else None)

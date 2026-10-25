@@ -15,7 +15,7 @@ for the duration of `updatePlayer()` and clears it in `finally`.
 `scripts/build-pitremake.py` compiles the changed upstream source against the
 SHA-256-pinned official build 2803 JAR and the 1.8.8 server API. It replaces
 the 1.8.8 tracker and human NPC controller classes and marks the plugin version
-`2.0.30-PitRemake.18`. The full historical
+`2.0.30-PitRemake.19`. The full historical
 Maven reactor is retained for source review; the narrow build avoids reliance
 on abandoned dependency repositories and gives CI a reproducible base check.
 
@@ -23,6 +23,23 @@ The fork also leaves PitRemake combat bots out of Citizens' fake scoreboard
 teams. PitRemake already assigns their visible name and tab team; the two
 owners formerly competed for the same entry and forced a packet every display
 refresh. Other Citizens NPCs retain their ordinary team behavior.
+
+Revision 19 stops the API Equipment trait from deep-cloning unchanged combat-bot
+hand/armor NBT every tick. It still checks every slot every tick and clones each
+change. Reuse is limited to marked Pit player bots and detached Wind CraftItemStack
+snapshots made by that trait; ordinary NPCs keep upstream behavior. Native count,
+type, damage and NBT edits, including in-place edits, remain visible. Public array
+replacement with a live mirror forces a new detached snapshot. Packet cadence,
+bow animation and native movement remain unchanged.
+
+The historical API source and its provenance are in `compat-api/`. The builder
+compiles that single source against a checksum-pinned Spigot 1.13.2 API solely
+to retain its existing dormant offhand/1.13 methods. That API is never shipped
+or used for runtime tests. The default download is cached under ignored
+`build/dependencies`; pass `--equipment-api <file>` for an offline pinned copy.
+Native Wind regression coverage includes unchanged allocation avoidance, all
+five visible equipment slots, unsupported 1.8 offhand state, in-place NBT changes,
+snapshot mutation, null/AIR, marker transitions, respawn, and load/save.
 
 Revision 18 sends dirty combat-bot hand equipment each tick, before native
 use-item metadata, so a bow draw cannot disappear inside the 30-tick armor

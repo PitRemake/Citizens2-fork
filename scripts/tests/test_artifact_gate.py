@@ -74,6 +74,18 @@ class ArtifactGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Truncated"):
             BUILDER.verify_artifact(self.jar(self.code[:100]))
 
+    def test_explicit_missing_equipment_compile_api_does_not_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "Missing explicitly supplied"):
+                BUILDER.equipment_compile_api(pathlib.Path(directory) / "absent.jar")
+
+    def test_wrong_equipment_compile_api_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "changed.jar"
+            path.write_bytes(b"not the pinned compile API")
+            with self.assertRaisesRegex(ValueError, "hash does not match"):
+                BUILDER.equipment_compile_api(path)
+
 
 if __name__ == "__main__":
     unittest.main()

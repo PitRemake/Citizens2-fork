@@ -25,6 +25,7 @@ def run(artifact, old_artifact, server, javac, java, baseline=None, libraries=No
                         str(ROOT / "tests/NpcBotOptimizationCompatibility.java"),
                         str(ROOT / "tests/NpcSkinVisibilityCompatibility.java"),
                         str(ROOT / "tests/NpcSkinCpuRecoveryCompatibility.java"),
+                        str(ROOT / "tests/NpcEquipmentSnapshotCompatibility.java"),
                         str(ROOT / "tests/NpcUtilityCompatibility.java")], check=True)
         subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
                         "NpcUtilityCompatibility"], cwd=classes, check=True)
@@ -32,6 +33,8 @@ def run(artifact, old_artifact, server, javac, java, baseline=None, libraries=No
                         "NpcPacketQueueCompatibility"], cwd=classes, check=True)
         subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
                         "NpcBotOptimizationCompatibility"], cwd=classes, check=True)
+        subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
+                        "NpcEquipmentSnapshotCompatibility"], cwd=classes, check=True)
         subprocess.run([str(java), "-cp", str(classes) + os.pathsep + classpath,
                         "NpcSkinVisibilityCompatibility"], cwd=classes, check=True)
         if libraries:
